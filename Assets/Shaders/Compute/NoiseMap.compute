@@ -1,0 +1,38 @@
+#pragma kernel CSMain
+
+#include "FastNoise.hlsl"
+
+RWStructuredBuffer<float> noiseMap;
+int mapSize;
+uint noiseMapSize;
+int seed;
+float scale;
+int octaves;
+float persistence;
+float lacunarity;
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= noiseMapSize)
+        return;
+
+    int x = id.x % mapSize;
+    int y = id.x / mapSize;
+
+    // Initialize FastNoise state for FBM
+    fnl_state state = fnlCreateState(seed);
+    state.noise_type = FNL_NOISE_OPENSIMPLEX2;
+    state.fractal_type = FNL_FRACTAL_FBM;
+    state.octaves = octaves;
+    state.lacunarity = lacunarity;
+    state.gain = persistence; // In FastNoise, gain is equivalent to persistence
+    state.frequency = scale / mapSize;
+    
+    // Get noise value (range is -1 to 1)
+    float noise = fnlGetNoise2D(state, x, y);
+
+    // Remap noise from [-1, 1] to [0, 1]
+    // 0 = soft ground, 1 = hard rock
+    noiseMap[id.x] = (noise + 1) * 0.5;
+}

@@ -39,7 +39,6 @@ public class TerrainGeneratorEditor : Editor
 
         serializedObject.ApplyModifiedProperties();
     }
-
     private void DrawEditorHeader()
     {
         EditorGUILayout.BeginVertical("box");
@@ -54,7 +53,7 @@ public class TerrainGeneratorEditor : Editor
         EditorGUILayout.LabelField("🚀 World Generation", EditorStyles.boldLabel);
 
         // Main generation button
-        GUI.backgroundColor = Color.green;
+        GUI.backgroundColor = new Color(0.4f, 0.8f, 0.4f);
         if (GUILayout.Button("🌍 Generate Complete World", GUILayout.Height(35)))
         {
             GenerateCompleteWorld();
@@ -234,7 +233,7 @@ public class TerrainGeneratorEditor : Editor
         {
             EditorGUI.indentLevel++;
 
-            EditorGUILayout.HelpBox("Noise-based terrain height generation using Perlin noise layers.", MessageType.Info);
+            EditorGUILayout.HelpBox("Fractal noise settings for the initial terrain shape.", MessageType.Info);
 
             EditorGUILayout.PropertyField(serializedObject.FindProperty("heightMapComputeShader"), new GUIContent("Height Map Shader"));
 
@@ -266,12 +265,22 @@ public class TerrainGeneratorEditor : Editor
         {
             EditorGUI.indentLevel++;
 
-            EditorGUILayout.HelpBox("Hydraulic erosion simulation using water droplets.", MessageType.Info);
-
             EditorGUILayout.PropertyField(serializedObject.FindProperty("erosion"), new GUIContent("Erosion Shader"));
 
+            // *** NEW SECTION FOR EROSION RESISTANCE MAP ***
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("🪨 Erosion Resistance Map", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox("Uses a noise map to simulate soil hardness. Whiter areas (hard rock) will erode slower than darker areas (soft soil).", MessageType.Info);
+
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("noiseMapComputeShader"), new GUIContent("Noise Map Shader"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("noiseMapScale"), new GUIContent("Resistance Scale", "Scale of the soil hardness patterns."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("noiseMapOctaves"), new GUIContent("Resistance Octaves", "Detail in the hardness patterns."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("noiseMapPersistence"), new GUIContent("Resistance Persistence"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("noiseMapLacunarity"), new GUIContent("Resistance Lacunarity"));
+
             // Performance settings
-            EditorGUILayout.LabelField("Performance", EditorStyles.boldLabel);
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("💧 Droplet Simulation", EditorStyles.boldLabel);
             SerializedProperty numIterations = serializedObject.FindProperty("numErosionIterations");
             SerializedProperty brushRadius = serializedObject.FindProperty("erosionBrushRadius");
 
@@ -280,7 +289,7 @@ public class TerrainGeneratorEditor : Editor
 
             // Droplet physics
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Droplet Physics", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Physics", EditorStyles.miniBoldLabel);
 
             SerializedProperty maxLifetime = serializedObject.FindProperty("maxLifetime");
             SerializedProperty gravity = serializedObject.FindProperty("gravity");
@@ -298,7 +307,7 @@ public class TerrainGeneratorEditor : Editor
 
             // Erosion & deposition
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Erosion & Deposition", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Sediment", EditorStyles.miniBoldLabel);
 
             SerializedProperty sedimentCapacity = serializedObject.FindProperty("sedimentCapacityFactor");
             SerializedProperty minSedimentCapacity = serializedObject.FindProperty("minSedimentCapacity");

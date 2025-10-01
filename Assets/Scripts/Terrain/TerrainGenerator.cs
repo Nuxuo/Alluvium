@@ -46,6 +46,14 @@ public class TerrainGenerator : MonoBehaviour
     public int numErosionIterations = 50000;
     public int erosionBrushRadius = 3;
 
+    // New variables for the erosion resistance map
+    [Header("Erosion Noise Map")]
+    public ComputeShader noiseMapComputeShader;
+    public float noiseMapScale = 2.5f;
+    public int noiseMapOctaves = 4;
+    public float noiseMapPersistence = 0.5f;
+    public float noiseMapLacunarity = 2.0f;
+
     public int maxLifetime = 30;
     public float sedimentCapacityFactor = 3;
     public float minSedimentCapacity = .01f;
@@ -100,8 +108,10 @@ public class TerrainGenerator : MonoBehaviour
 
         int floatToIntMultiplier = 1000;
         float[] map = new float[mapSize * mapSize];
+        // Initialize map with 0s for the compute shader
+        for (int i = 0; i < map.Length; i++) { map[i] = 0; }
 
-        ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(int));
+        ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(float));
         mapBuffer.SetData(map);
         heightMapComputeShader.SetBuffer(0, "heightMap", mapBuffer);
 
@@ -117,6 +127,7 @@ public class TerrainGenerator : MonoBehaviour
         heightMapComputeShader.SetFloat("scaleFactor", initialScale);
         heightMapComputeShader.SetInt("floatToIntMultiplier", floatToIntMultiplier);
         heightMapComputeShader.SetInt("heightMapSize", map.Length);
+        heightMapComputeShader.SetInt("seed", seed);
 
         ComputeHelper.Dispatch(heightMapComputeShader, map.Length);
 
@@ -142,9 +153,38 @@ public class TerrainGenerator : MonoBehaviour
         ErodeGPU();
     }
 
+    // New function to generate the erosion resistance noise map
+    float[] GenerateNoiseMapGPU(int mapSize)
+    {
+        float[] noiseMap = new float[mapSize * mapSize];
+        ComputeBuffer noiseMapBuffer = new ComputeBuffer(noiseMap.Length, sizeof(float));
+        noiseMapBuffer.SetData(noiseMap);
+        noiseMapComputeShader.SetBuffer(0, "noiseMap", noiseMapBuffer);
+
+        noiseMapComputeShader.SetInt("mapSize", mapSize);
+        noiseMapComputeShader.SetInt("noiseMapSize", noiseMap.Length);
+        noiseMapComputeShader.SetInt("seed", seed);
+        noiseMapComputeShader.SetFloat("scale", noiseMapScale);
+        noiseMapComputeShader.SetInt("octaves", noiseMapOctaves);
+        noiseMapComputeShader.SetFloat("persistence", noiseMapPersistence);
+        noiseMapComputeShader.SetFloat("lacunarity", noiseMapLacunarity);
+
+        ComputeHelper.Dispatch(noiseMapComputeShader, noiseMap.Length);
+
+        noiseMapBuffer.GetData(noiseMap);
+        noiseMapBuffer.Release();
+
+        return noiseMap;
+    }
+
     private void ErodeGPU()
     {
         int numThreads = numErosionIterations / 1024;
+
+        // Generate the noise map and create a buffer for it
+        float[] noiseMap = GenerateNoiseMapGPU(mapSizeWithBorder);
+        ComputeBuffer noiseMapBuffer = new ComputeBuffer(noiseMap.Length, sizeof(float));
+        noiseMapBuffer.SetData(noiseMap);
 
         ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(float));
         mapBuffer.SetData(map);
@@ -169,6 +209,8 @@ public class TerrainGenerator : MonoBehaviour
         ComputeBuffer randomIndexBuffer = new ComputeBuffer(randomIndices.Length, sizeof(int));
         randomIndexBuffer.SetData(randomIndices);
 
+        // Pass the new noiseMapBuffer to the erosion shader
+        erosion.SetBuffer(0, "noiseMap", noiseMapBuffer);
         erosion.SetBuffer(0, "map", mapBuffer);
         erosion.SetBuffer(0, "randomIndices", randomIndexBuffer);
         erosion.SetBuffer(0, "brushIndices", brushIndexBuffer);
@@ -192,10 +234,12 @@ public class TerrainGenerator : MonoBehaviour
 
         mapBuffer.GetData(map);
 
+        // Release all buffers, including the new one
         mapBuffer.Release();
         brushIndexBuffer.Release();
         brushWeightBuffer.Release();
         randomIndexBuffer.Release();
+        noiseMapBuffer.Release();
     }
 
     private void CreateErosionBrush(ref System.Collections.Generic.List<int> brushIndexOffsets, ref System.Collections.Generic.List<float> brushWeights)
@@ -225,9 +269,7 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Constructs the terrain mesh using the voxel generator
-    /// </summary>
+    // ... (The rest of the file remains the same) ...
     public void ConstructMesh()
     {
         EnsureGeneratorInitialized();

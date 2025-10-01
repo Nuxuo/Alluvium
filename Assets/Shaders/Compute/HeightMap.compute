@@ -14,7 +14,7 @@ float lacunarity;
 float persistence;
 float scaleFactor;
 uint heightMapSize;
-int seed; // Added seed for FastNoise
+int seed;
 
 [numthreads(64, 1, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
@@ -22,35 +22,36 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= heightMapSize)
         return;
 
+    // Create a local variable to store the height
+    float height = 0;
+
     int x = id.x % mapSize;
     int y = id.x / mapSize;
 
     float scale = scaleFactor;
     float weight = 1;
 
-    // 1. Initialize the FastNoise state
     fnl_state state = fnlCreateState(seed);
-    state.noise_type = FNL_NOISE_OPENSIMPLEX2; // Using OpenSimplex2 as a replacement
-    state.frequency = 1.0; // We will handle scaling manually in the coordinates
+    state.noise_type = FNL_NOISE_OPENSIMPLEX2;
+    state.frequency = 1.0;
 
     for (int i = 0; i < octaves; i++)
     {
-        // 2. Define coordinates, same as before
         float2 coord = float2(x, y) / mapSize * scale + offsets[i];
-
-        // 3. Get noise from FastNoise
-        // We use a "single" noise function to replicate the original loop's behavior.
-        // The seed is incremented per octave to get a different pattern.
+        
         float noise = _fnlGenNoiseSingle2D(state, seed + i, coord.x, coord.y);
 
-        // 4. Remap noise from [-1, 1] to [0, 1] to match the original snoise output range
         noise = (noise + 1) * 0.5;
 
-        heightMap[id.x] += noise * weight;
+        // Add to the local variable instead of the buffer
+        height += noise * weight;
 
         scale *= lacunarity;
         weight *= persistence;
     }
+    
+    // Write the final calculated value to the buffer once
+    heightMap[id.x] = height;
     
     int val = int(heightMap[id.x] * floatToIntMultiplier);
     InterlockedMin(minMax[0], val);
