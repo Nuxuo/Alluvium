@@ -1,5 +1,7 @@
 ﻿#pragma kernel CSMain
-#include "Noise.hlsl"
+
+// Include FastNoise instead of Noise.hlsl
+#include "FastNoise.hlsl"
 
 RWStructuredBuffer<float> heightMap;
 RWStructuredBuffer<int> minMax;
@@ -12,24 +14,45 @@ float lacunarity;
 float persistence;
 float scaleFactor;
 uint heightMapSize;
+int seed; // Added seed for FastNoise
 
-
-[numthreads(64,1,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    if (id.x >= heightMapSize) return;
+    if (id.x >= heightMapSize)
+        return;
 
     int x = id.x % mapSize;
     int y = id.x / mapSize;
 
     float scale = scaleFactor;
     float weight = 1;
-    for (int i = 0; i < octaves; i ++) {
-        heightMap[id.x] += snoise(float2(x,y)/mapSize * scale + offsets[i]) * weight;
+
+    // 1. Initialize the FastNoise state
+    fnl_state state = fnlCreateState(seed);
+    state.noise_type = FNL_NOISE_OPENSIMPLEX2; // Using OpenSimplex2 as a replacement
+    state.frequency = 1.0; // We will handle scaling manually in the coordinates
+
+    for (int i = 0; i < octaves; i++)
+    {
+        // 2. Define coordinates, same as before
+        float2 coord = float2(x, y) / mapSize * scale + offsets[i];
+
+        // 3. Get noise from FastNoise
+        // We use a "single" noise function to replicate the original loop's behavior.
+        // The seed is incremented per octave to get a different pattern.
+        float noise = _fnlGenNoiseSingle2D(state, seed + i, coord.x, coord.y);
+
+        // 4. Remap noise from [-1, 1] to [0, 1] to match the original snoise output range
+        noise = (noise + 1) * 0.5;
+
+        heightMap[id.x] += noise * weight;
+
         scale *= lacunarity;
         weight *= persistence;
     }
+    
     int val = int(heightMap[id.x] * floatToIntMultiplier);
-    InterlockedMin(minMax[0],val);
-    InterlockedMax(minMax[1],val); 
+    InterlockedMin(minMax[0], val);
+    InterlockedMax(minMax[1], val);
 }
