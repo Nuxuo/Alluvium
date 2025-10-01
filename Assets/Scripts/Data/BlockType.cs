@@ -7,6 +7,7 @@ namespace VoxelTerrain.Data
     {
         Dirt = 0,
         Sand = 1,
-        Snow = 2
+        Snow = 2,
+        Rock = 3
     }
 }

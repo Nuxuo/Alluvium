@@ -20,11 +20,15 @@ public class TerrainGenerator : MonoBehaviour
     public bool generateVoxelSkirt = true;
     public Material voxelMaterial;
 
-    [Header("Voxel Block Types")]
-    [Range(0f, 1f)]
-    public float sandHeightThreshold = 0.3f;
-    [Range(0f, 1f)]
-    public float snowHeightThreshold = 0.75f;
+    [Header("Block Type Generation")]
+    public ComputeShader blockTypeComputeShader;
+
+    [Header("Dynamic Block Type Configuration")]
+    [Tooltip("Define rules for each block type - they can overlap and blend!")]
+    public List<VoxelTerrain.Data.BlockTypeConfig> blockTypeConfigs = new List<VoxelTerrain.Data.BlockTypeConfig>();
+
+    [HideInInspector]
+    public bool needsDefaultConfigs = true;
 
     [Header("Water Settings")]
     public bool enableWater = true;
@@ -269,10 +273,15 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
-    // ... (The rest of the file remains the same) ...
     public void ConstructMesh()
     {
         EnsureGeneratorInitialized();
+
+        // Initialize default configs if needed
+        if (blockTypeConfigs == null || blockTypeConfigs.Count == 0 || needsDefaultConfigs)
+        {
+            SetupDefaultBlockConfigs();
+        }
 
         TerrainMeshData meshData = new TerrainMeshData
         {
@@ -284,10 +293,26 @@ public class TerrainGenerator : MonoBehaviour
             elevationScale = elevationScale,
             skirtHeight = 0,
             voxelSize = voxelSize,
-            generateVoxelSkirt = generateVoxelSkirt,
-            sandHeightThreshold = sandHeightThreshold,
-            snowHeightThreshold = snowHeightThreshold
+            generateVoxelSkirt = generateVoxelSkirt
         };
+
+        // Generate block types using dynamic configuration
+        if (blockTypeComputeShader != null && blockTypeConfigs.Count > 0)
+        {
+            VoxelTerrain.Generators.BlockTypeGenerator.GenerateBlockTypes(
+                meshData,
+                blockTypeComputeShader,
+                seed,
+                blockTypeConfigs
+            );
+        }
+        else
+        {
+            if (blockTypeComputeShader == null)
+                Debug.LogError("Block Type Compute Shader is not assigned!");
+            if (blockTypeConfigs.Count == 0)
+                Debug.LogError("No block type configurations defined!");
+        }
 
         mesh = voxelMeshGenerator.GenerateMesh(meshData);
 
@@ -425,5 +450,94 @@ public class TerrainGenerator : MonoBehaviour
 
         waterMeshRenderer = waterHolder.GetComponent<MeshRenderer>();
         waterMeshFilter = waterHolder.GetComponent<MeshFilter>();
+    }
+
+    public void SetupDefaultBlockConfigs()
+    {
+        blockTypeConfigs.Clear();
+
+        // EXAMPLE 1: Using Normalized Height Mode (0-1)
+        // Sand - Low elevations, gentle slopes
+        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
+        {
+            blockType = VoxelTerrain.Data.BlockType.Sand,
+            displayName = "Sand (Normalized)",
+            previewColor = new Color(0.85f, 0.75f, 0.55f),
+            heightMode = VoxelTerrain.Data.HeightMode.Normalized,
+            minHeight = 0f,
+            maxHeight = 0.35f,
+            heightBlendAmount = 0.12f,
+            minSlope = 0f,
+            maxSlope = 0.4f,
+            slopeBlendAmount = 0.1f,
+            priority = 5,
+            strength = 1f,
+            useNoiseVariation = true,
+            noiseInfluence = 0.3f
+        });
+
+        // EXAMPLE 2: Using Voxel Layer Mode (absolute layer numbers)
+        // Grass/Dirt - Layers 15 to 60
+        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
+        {
+            blockType = VoxelTerrain.Data.BlockType.Dirt,
+            displayName = "Grass/Dirt (Voxel Layers)",
+            previewColor = new Color(0.4f, 0.3f, 0.2f),
+            heightMode = VoxelTerrain.Data.HeightMode.VoxelLayers,
+            minVoxelLayer = 15,
+            maxVoxelLayer = 60,
+            voxelLayerBlend = 5,
+            minSlope = 0f,
+            maxSlope = 0.8f,
+            slopeBlendAmount = 0.15f,
+            priority = 3,
+            strength = 1f,
+            useNoiseVariation = true,
+            noiseInfluence = 0.25f
+        });
+
+        // EXAMPLE 3: Snow using Voxel Layers - Above layer 55
+        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
+        {
+            blockType = VoxelTerrain.Data.BlockType.Snow,
+            displayName = "Snow (Voxel Layers)",
+            previewColor = new Color(0.95f, 0.95f, 1f),
+            heightMode = VoxelTerrain.Data.HeightMode.VoxelLayers,
+            minVoxelLayer = 55,
+            maxVoxelLayer = 100, // Will auto-adjust to max terrain height
+            voxelLayerBlend = 4,
+            minSlope = 0f,
+            maxSlope = 2f,
+            slopeBlendAmount = 0.2f,
+            priority = 6,
+            strength = 1f,
+            useNoiseVariation = true,
+            noiseInfluence = 0.2f
+        });
+
+        // EXAMPLE 4: Rock on steep slopes - works with either mode
+        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
+        {
+            blockType = VoxelTerrain.Data.BlockType.Rock,
+            displayName = "Rock/Cliff (Normalized)",
+            previewColor = new Color(0.3f, 0.3f, 0.35f),
+            heightMode = VoxelTerrain.Data.HeightMode.Normalized,
+            minHeight = 0f,
+            maxHeight = 1f,
+            heightBlendAmount = 0.05f,
+            minSlope = 0.6f,
+            maxSlope = 2f,
+            slopeBlendAmount = 0.15f,
+            priority = 8,
+            strength = 1f,
+            useNoiseVariation = true,
+            noiseInfluence = 0.15f
+        });
+
+        needsDefaultConfigs = false;
+
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.SetDirty(this);
+#endif
     }
 }

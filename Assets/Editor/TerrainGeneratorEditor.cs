@@ -113,14 +113,29 @@ public class TerrainGeneratorEditor : Editor
     private void DrawVoxelSettings()
     {
         EditorGUILayout.BeginVertical("box");
-        showVoxelSettings = EditorGUILayout.Foldout(showVoxelSettings, "📦 Voxel Settings", true, EditorStyles.foldoutHeader);
+        showVoxelSettings = EditorGUILayout.Foldout(showVoxelSettings, "📦 Voxel & Block Settings", true, EditorStyles.foldoutHeader);
 
         if (showVoxelSettings)
         {
             EditorGUI.indentLevel++;
 
-            EditorGUILayout.HelpBox("Voxel generation creates a blocky, minecraft-style terrain using the heightmap data. Only visible faces are generated for optimal performance.", MessageType.Info);
+            EditorGUILayout.HelpBox("Voxel generation creates blocky terrain. Configure block types dynamically with custom rules for height, slope, and blending!", MessageType.Info);
 
+            // === BLOCK TYPE COMPUTE SHADER ===
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("⚡ GPU Acceleration", EditorStyles.boldLabel);
+
+            SerializedProperty blockTypeShader = serializedObject.FindProperty("blockTypeComputeShader");
+            EditorGUILayout.PropertyField(blockTypeShader, new GUIContent("Block Type Shader", "GPU compute shader for block generation"));
+
+            if (blockTypeShader.objectReferenceValue == null)
+            {
+                EditorGUILayout.HelpBox("⚠️ Block Type Compute Shader is required!", MessageType.Warning);
+            }
+
+            EditorGUILayout.Space();
+
+            // === VOXEL SETTINGS ===
             EditorGUI.BeginChangeCheck();
 
             SerializedProperty voxelSize = serializedObject.FindProperty("voxelSize");
@@ -129,9 +144,8 @@ public class TerrainGeneratorEditor : Editor
             SerializedProperty generateVoxelSkirt = serializedObject.FindProperty("generateVoxelSkirt");
             EditorGUILayout.PropertyField(generateVoxelSkirt, new GUIContent("Generate Skirt", "Add voxel skirt around edges"));
 
-            // Voxel material
             SerializedProperty voxelMaterial = serializedObject.FindProperty("voxelMaterial");
-            EditorGUILayout.PropertyField(voxelMaterial, new GUIContent("Voxel Material", "Material used for voxel rendering (use Custom/Voxel shader)"));
+            EditorGUILayout.PropertyField(voxelMaterial, new GUIContent("Voxel Material", "Material for voxel rendering"));
 
             if (EditorGUI.EndChangeCheck())
             {
@@ -142,46 +156,50 @@ public class TerrainGeneratorEditor : Editor
                 }
             }
 
-            // Block Type Settings
+            // === DYNAMIC BLOCK TYPE CONFIGURATION ===
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("🎨 Block Types", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("🎨 Dynamic Block Type Rules", EditorStyles.boldLabel);
 
-            EditorGUILayout.HelpBox("Configure which block types appear at different heights:\n• Sand: Below threshold\n• Dirt: Between thresholds\n• Snow: Above threshold", MessageType.Info);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.HelpBox("Each block type has its own rules. They can overlap - higher priority wins!", MessageType.Info);
+            if (GUILayout.Button("Reset to Defaults", GUILayout.Width(130)))
+            {
+                terrainGenerator.SetupDefaultBlockConfigs();
+                serializedObject.Update();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            SerializedProperty blockConfigs = serializedObject.FindProperty("blockTypeConfigs");
+
+            if (blockConfigs.arraySize == 0)
+            {
+                EditorGUILayout.HelpBox("No block types configured. Click 'Reset to Defaults' to create starter configurations.", MessageType.Warning);
+            }
 
             EditorGUI.BeginChangeCheck();
 
-            SerializedProperty sandThreshold = serializedObject.FindProperty("sandHeightThreshold");
-            EditorGUILayout.Slider(sandThreshold, 0f, 1f, new GUIContent("Sand Height Threshold", "Heights below this become sand (beach/shore)"));
+            // Draw each block type config
+            for (int i = 0; i < blockConfigs.arraySize; i++)
+            {
+                SerializedProperty config = blockConfigs.GetArrayElementAtIndex(i);
+                DrawBlockTypeConfig(config, i);
+            }
 
-            SerializedProperty snowThreshold = serializedObject.FindProperty("snowHeightThreshold");
-            EditorGUILayout.Slider(snowThreshold, 0f, 1f, new GUIContent("Snow Height Threshold", "Heights above this become snow (peaks)"));
+            // Add/Remove buttons
+            EditorGUILayout.Space();
+            EditorGUILayout.BeginHorizontal();
 
-            // Visual indicator of ranges
-            EditorGUILayout.Space(5);
-            Rect rect = GUILayoutUtility.GetRect(0, 20);
-            rect.x += EditorGUIUtility.labelWidth;
-            rect.width -= EditorGUIUtility.labelWidth;
+            if (GUILayout.Button("➕ Add Block Type"))
+            {
+                blockConfigs.InsertArrayElementAtIndex(blockConfigs.arraySize);
+            }
 
-            float sandPoint = rect.x + rect.width * terrainGenerator.sandHeightThreshold;
-            float snowPoint = rect.x + rect.width * terrainGenerator.snowHeightThreshold;
+            if (blockConfigs.arraySize > 0 && GUILayout.Button("➖ Remove Last"))
+            {
+                blockConfigs.DeleteArrayElementAtIndex(blockConfigs.arraySize - 1);
+            }
 
-            // Draw gradient background
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y, sandPoint - rect.x, rect.height), new Color(0.85f, 0.75f, 0.55f)); // Sand
-            EditorGUI.DrawRect(new Rect(sandPoint, rect.y, snowPoint - sandPoint, rect.height), new Color(0.4f, 0.3f, 0.2f)); // Dirt
-            EditorGUI.DrawRect(new Rect(snowPoint, rect.y, rect.x + rect.width - snowPoint, rect.height), new Color(0.95f, 0.95f, 1f)); // Snow
-
-            // Draw threshold lines
-            EditorGUI.DrawRect(new Rect(sandPoint - 1, rect.y, 2, rect.height), Color.black);
-            EditorGUI.DrawRect(new Rect(snowPoint - 1, rect.y, 2, rect.height), Color.black);
-
-            // Labels
-            GUIStyle labelStyle = new GUIStyle(EditorStyles.miniLabel);
-            labelStyle.alignment = TextAnchor.MiddleCenter;
-            GUI.Label(new Rect(rect.x, rect.y + rect.height + 2, sandPoint - rect.x, 15), "Sand", labelStyle);
-            GUI.Label(new Rect(sandPoint, rect.y + rect.height + 2, snowPoint - sandPoint, 15), "Dirt", labelStyle);
-            GUI.Label(new Rect(snowPoint, rect.y + rect.height + 2, rect.x + rect.width - snowPoint, 15), "Snow", labelStyle);
-
-            EditorGUILayout.Space(20);
+            EditorGUILayout.EndHorizontal();
 
             if (EditorGUI.EndChangeCheck())
             {
@@ -192,36 +210,248 @@ public class TerrainGeneratorEditor : Editor
                 }
             }
 
-            // Display voxel stats
-            float cellSize = (terrainGenerator.scale * 2f) / (terrainGenerator.mapSize - 1);
-            float actualVoxelSize = cellSize * terrainGenerator.voxelSize;
-            int maxVoxelLayers = Mathf.RoundToInt(terrainGenerator.elevationScale / actualVoxelSize);
+            // === VISUAL HEIGHT DISTRIBUTION ===
+            DrawHeightDistributionPreview();
 
-            EditorGUILayout.Space();
-            EditorGUILayout.LabelField("📊 Voxel Statistics", EditorStyles.boldLabel);
+            // === STATISTICS ===
+            DrawVoxelStatistics();
 
-            // Show mesh stats if available
-            Transform meshHolder = terrainGenerator.transform.Find("Mesh Holder");
-            if (meshHolder != null && meshHolder.GetComponent<MeshFilter>() != null &&
-                meshHolder.GetComponent<MeshFilter>().sharedMesh != null)
+            EditorGUI.indentLevel--;
+        }
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawBlockTypeConfig(SerializedProperty config, int index)
+    {
+        EditorGUILayout.Space(5);
+        EditorGUILayout.BeginVertical("box");
+
+        SerializedProperty displayName = config.FindPropertyRelative("displayName");
+        SerializedProperty blockType = config.FindPropertyRelative("blockType");
+        SerializedProperty previewColor = config.FindPropertyRelative("previewColor");
+        SerializedProperty priority = config.FindPropertyRelative("priority");
+
+        // Header with color preview
+        EditorGUILayout.BeginHorizontal();
+
+        Rect colorRect = GUILayoutUtility.GetRect(20, 20, GUILayout.Width(20));
+        EditorGUI.DrawRect(colorRect, previewColor.colorValue);
+        EditorGUI.DrawRect(new Rect(colorRect.x, colorRect.y, colorRect.width, 1), Color.black);
+        EditorGUI.DrawRect(new Rect(colorRect.x, colorRect.y + colorRect.height - 1, colorRect.width, 1), Color.black);
+        EditorGUI.DrawRect(new Rect(colorRect.x, colorRect.y, 1, colorRect.height), Color.black);
+        EditorGUI.DrawRect(new Rect(colorRect.x + colorRect.width - 1, colorRect.y, 1, colorRect.height), Color.black);
+
+        bool foldout = config.isExpanded;
+        string headerText = $"{displayName.stringValue} (Priority: {priority.intValue})";
+        config.isExpanded = EditorGUILayout.Foldout(foldout, headerText, true, EditorStyles.foldoutHeader);
+
+        EditorGUILayout.EndHorizontal();
+
+        if (config.isExpanded)
+        {
+            EditorGUI.indentLevel++;
+
+            // Identity
+            EditorGUILayout.PropertyField(displayName);
+            EditorGUILayout.PropertyField(blockType);
+            EditorGUILayout.PropertyField(previewColor);
+
+            EditorGUILayout.Space(3);
+
+            // Height Mode Selection
+            SerializedProperty heightMode = config.FindPropertyRelative("heightMode");
+            EditorGUILayout.PropertyField(heightMode, new GUIContent("Height Mode"));
+
+            EditorGUILayout.Space(3);
+
+            bool isNormalizedMode = heightMode.enumValueIndex == 0;
+
+            if (isNormalizedMode)
             {
-                var mesh = meshHolder.GetComponent<MeshFilter>().sharedMesh;
-                EditorGUILayout.HelpBox(
-                    $"Actual voxel size: {actualVoxelSize:F2} units\n" +
-                    $"Max voxel layers: ~{maxVoxelLayers}\n" +
-                    $"Optimization: Only visible faces rendered\n" +
-                    $"Current mesh: {mesh.vertexCount:N0} vertices, {mesh.triangles.Length / 3:N0} triangles",
-                    MessageType.None);
+                // NORMALIZED HEIGHT MODE (0-1)
+                EditorGUILayout.LabelField("Height Rules - Normalized (0-1)", EditorStyles.miniBoldLabel);
+
+                SerializedProperty minHeight = config.FindPropertyRelative("minHeight");
+                SerializedProperty maxHeight = config.FindPropertyRelative("maxHeight");
+                SerializedProperty heightBlend = config.FindPropertyRelative("heightBlendAmount");
+
+                EditorGUILayout.Slider(minHeight, 0f, 1f, "Min Height");
+                EditorGUILayout.Slider(maxHeight, 0f, 1f, "Max Height");
+                EditorGUILayout.Slider(heightBlend, 0.01f, 0.5f, "Height Blend");
+
+                // Visual height range
+                Rect rangeRect = GUILayoutUtility.GetRect(0, 15);
+                rangeRect.x += EditorGUIUtility.labelWidth + 4;
+                rangeRect.width -= EditorGUIUtility.labelWidth + 4;
+
+                float minX = rangeRect.x + rangeRect.width * minHeight.floatValue;
+                float maxX = rangeRect.x + rangeRect.width * maxHeight.floatValue;
+
+                EditorGUI.DrawRect(new Rect(rangeRect.x, rangeRect.y, rangeRect.width, rangeRect.height), new Color(0.2f, 0.2f, 0.2f));
+                EditorGUI.DrawRect(new Rect(minX, rangeRect.y, maxX - minX, rangeRect.height), previewColor.colorValue * 0.7f);
             }
             else
             {
-                EditorGUILayout.HelpBox($"Actual voxel size: {actualVoxelSize:F2} units\nMax voxel layers: ~{maxVoxelLayers}\nOptimization: Only visible faces rendered", MessageType.None);
+                // VOXEL LAYER MODE (Absolute)
+                EditorGUILayout.LabelField("Height Rules - Voxel Layers", EditorStyles.miniBoldLabel);
+
+                // Calculate max possible voxel layers for reference
+                float cellSize = (terrainGenerator.scale * 2f) / (terrainGenerator.mapSize - 1);
+                float actualVoxelSize = cellSize * terrainGenerator.voxelSize;
+                int maxPossibleLayers = Mathf.Max(1, Mathf.RoundToInt(terrainGenerator.elevationScale / actualVoxelSize));
+
+                SerializedProperty minVoxelLayer = config.FindPropertyRelative("minVoxelLayer");
+                SerializedProperty maxVoxelLayer = config.FindPropertyRelative("maxVoxelLayer");
+                SerializedProperty voxelLayerBlend = config.FindPropertyRelative("voxelLayerBlend");
+
+                EditorGUILayout.IntSlider(minVoxelLayer, 0, maxPossibleLayers, "Min Voxel Layer");
+                EditorGUILayout.IntSlider(maxVoxelLayer, 0, maxPossibleLayers, "Max Voxel Layer");
+                EditorGUILayout.IntSlider(voxelLayerBlend, 1, 20, "Layer Blend Range");
+
+                EditorGUILayout.HelpBox($"Terrain has ~{maxPossibleLayers} voxel layers total\n" +
+                    $"Layer 0 = ground, Layer {maxPossibleLayers} = peak", MessageType.Info);
+
+                // Visual voxel layer range
+                Rect rangeRect = GUILayoutUtility.GetRect(0, 20);
+                rangeRect.x += EditorGUIUtility.labelWidth + 4;
+                rangeRect.width -= EditorGUIUtility.labelWidth + 4;
+
+                float minX = rangeRect.x + rangeRect.width * (minVoxelLayer.intValue / (float)maxPossibleLayers);
+                float maxX = rangeRect.x + rangeRect.width * (maxVoxelLayer.intValue / (float)maxPossibleLayers);
+
+                EditorGUI.DrawRect(new Rect(rangeRect.x, rangeRect.y, rangeRect.width, rangeRect.height), new Color(0.2f, 0.2f, 0.2f));
+                EditorGUI.DrawRect(new Rect(minX, rangeRect.y, maxX - minX, rangeRect.height), previewColor.colorValue * 0.7f);
+
+                // Draw layer markers
+                GUIStyle layerStyle = new GUIStyle(EditorStyles.miniLabel);
+                layerStyle.alignment = TextAnchor.UpperCenter;
+                layerStyle.normal.textColor = Color.white;
+                GUI.Label(new Rect(minX - 10, rangeRect.y + rangeRect.height + 2, 20, 15), minVoxelLayer.intValue.ToString(), layerStyle);
+                GUI.Label(new Rect(maxX - 10, rangeRect.y + rangeRect.height + 2, 20, 15), maxVoxelLayer.intValue.ToString(), layerStyle);
+            }
+
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Slope Rules", EditorStyles.miniBoldLabel);
+
+            SerializedProperty minSlope = config.FindPropertyRelative("minSlope");
+            SerializedProperty maxSlope = config.FindPropertyRelative("maxSlope");
+            SerializedProperty slopeBlend = config.FindPropertyRelative("slopeBlendAmount");
+
+            EditorGUILayout.Slider(minSlope, 0f, 2f, "Min Slope");
+            EditorGUILayout.Slider(maxSlope, 0f, 2f, "Max Slope");
+            EditorGUILayout.Slider(slopeBlend, 0.01f, 0.5f, "Slope Blend");
+
+            EditorGUILayout.Space(3);
+            EditorGUILayout.LabelField("Priority & Influence", EditorStyles.miniBoldLabel);
+
+            EditorGUILayout.IntSlider(priority, 0, 10, "Priority");
+
+            SerializedProperty strength = config.FindPropertyRelative("strength");
+            EditorGUILayout.Slider(strength, 0f, 1f, "Strength");
+
+            EditorGUILayout.Space(3);
+            EditorGUILayout.LabelField("Noise Variation", EditorStyles.miniBoldLabel);
+
+            SerializedProperty useNoise = config.FindPropertyRelative("useNoiseVariation");
+            SerializedProperty noiseInfluence = config.FindPropertyRelative("noiseInfluence");
+
+            EditorGUILayout.PropertyField(useNoise, new GUIContent("Use Noise"));
+            if (useNoise.boolValue)
+            {
+                EditorGUILayout.Slider(noiseInfluence, 0f, 1f, "Noise Influence");
             }
 
             EditorGUI.indentLevel--;
         }
 
         EditorGUILayout.EndVertical();
+    }
+
+    private void DrawHeightDistributionPreview()
+    {
+        EditorGUILayout.Space(10);
+        EditorGUILayout.LabelField("📊 Height Distribution Preview", EditorStyles.boldLabel);
+
+        Rect rect = GUILayoutUtility.GetRect(0, 40);
+        rect.x += EditorGUIUtility.labelWidth;
+        rect.width -= EditorGUIUtility.labelWidth;
+
+        // Background
+        EditorGUI.DrawRect(rect, new Color(0.15f, 0.15f, 0.15f));
+
+        // Draw each block type's range
+        SerializedProperty blockConfigs = serializedObject.FindProperty("blockTypeConfigs");
+        for (int i = 0; i < blockConfigs.arraySize; i++)
+        {
+            SerializedProperty config = blockConfigs.GetArrayElementAtIndex(i);
+            SerializedProperty minHeight = config.FindPropertyRelative("minHeight");
+            SerializedProperty maxHeight = config.FindPropertyRelative("maxHeight");
+            SerializedProperty previewColor = config.FindPropertyRelative("previewColor");
+            SerializedProperty displayName = config.FindPropertyRelative("displayName");
+
+            float minX = rect.x + rect.width * minHeight.floatValue;
+            float maxX = rect.x + rect.width * maxHeight.floatValue;
+            float barHeight = rect.height / blockConfigs.arraySize;
+            float yPos = rect.y + i * barHeight;
+
+            // Draw range bar
+            Color col = previewColor.colorValue;
+            col.a = 0.8f;
+            EditorGUI.DrawRect(new Rect(minX, yPos + 2, maxX - minX, barHeight - 4), col);
+
+            // Draw label
+            GUIStyle labelStyle = new GUIStyle(EditorStyles.miniLabel);
+            labelStyle.normal.textColor = Color.white;
+            GUI.Label(new Rect(minX + 4, yPos + 2, 100, barHeight - 4), displayName.stringValue, labelStyle);
+        }
+
+        // Draw height markers
+        for (float h = 0; h <= 1f; h += 0.25f)
+        {
+            float x = rect.x + rect.width * h;
+            EditorGUI.DrawRect(new Rect(x, rect.y, 1, rect.height), new Color(1, 1, 1, 0.3f));
+
+            GUIStyle markerStyle = new GUIStyle(EditorStyles.miniLabel);
+            markerStyle.alignment = TextAnchor.UpperCenter;
+            GUI.Label(new Rect(x - 20, rect.y + rect.height + 2, 40, 15), h.ToString("F2"), markerStyle);
+        }
+    }
+
+    private void DrawVoxelStatistics()
+    {
+        float cellSize = (terrainGenerator.scale * 2f) / (terrainGenerator.mapSize - 1);
+        float actualVoxelSize = cellSize * terrainGenerator.voxelSize;
+        int maxVoxelLayers = Mathf.RoundToInt(terrainGenerator.elevationScale / actualVoxelSize);
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("📊 Statistics", EditorStyles.boldLabel);
+
+        SerializedProperty blockConfigs = serializedObject.FindProperty("blockTypeConfigs");
+        int numBlockTypes = blockConfigs.arraySize;
+
+        Transform meshHolder = terrainGenerator.transform.Find("Mesh Holder");
+        if (meshHolder != null && meshHolder.GetComponent<MeshFilter>() != null &&
+            meshHolder.GetComponent<MeshFilter>().sharedMesh != null)
+        {
+            var mesh = meshHolder.GetComponent<MeshFilter>().sharedMesh;
+            EditorGUILayout.HelpBox(
+                $"Voxel size: {actualVoxelSize:F2} units\n" +
+                $"Max layers: ~{maxVoxelLayers}\n" +
+                $"Block types: {numBlockTypes} (dynamic)\n" +
+                $"Generation: GPU compute shader\n" +
+                $"Mesh: {mesh.vertexCount:N0} verts, {mesh.triangles.Length / 3:N0} tris",
+                MessageType.None);
+        }
+        else
+        {
+            EditorGUILayout.HelpBox(
+                $"Voxel size: {actualVoxelSize:F2} units\n" +
+                $"Max layers: ~{maxVoxelLayers}\n" +
+                $"Block types: {numBlockTypes} (dynamic)\n" +
+                $"Generation: GPU compute shader",
+                MessageType.None);
+        }
     }
 
     private void DrawHeightmapSettings()
