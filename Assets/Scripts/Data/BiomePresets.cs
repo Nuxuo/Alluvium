@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using System.Collections.Generic;
 
 namespace VoxelTerrain.Data
@@ -8,6 +8,8 @@ namespace VoxelTerrain.Data
     /// </summary>
     public static class BiomePresets
     {
+        // Replace the CreateMountains() method in BiomePresets.cs with this:
+
         public static BiomePreset CreateMountains()
         {
             var preset = ScriptableObject.CreateInstance<BiomePreset>();
@@ -26,120 +28,237 @@ namespace VoxelTerrain.Data
             preset.erosionBrushRadius = 5;
             preset.erosionStrength = 6f;
 
-            // Terrain rules
-            preset.terrainRules = new List<TerrainRule>
-            {
-                // Snow peaks
-                new TerrainRule
-                {
-                    ruleName = "Snow Peaks",
-                    terrainType = TerrainType.Snow,
-                    previewColor = new Color(0.95f, 0.95f, 1f),
-                    minHeight = 0.75f,
-                    maxHeight = 1f,
-                    heightBlend = 0.1f,
-                    minSlope = 0f,
-                    maxSlope = 2f,
-                    priority = 9,
-                    strength = 1f
-                },
-                // Rocky cliffs
-                new TerrainRule
-                {
-                    ruleName = "Rocky Cliffs",
-                    terrainType = TerrainType.Rock,
-                    previewColor = new Color(0.4f, 0.4f, 0.45f),
-                    minHeight = 0.4f,
-                    maxHeight = 1f,
-                    heightBlend = 0.15f,
-                    minSlope = 0.7f,
-                    maxSlope = 2f,
-                    priority = 8,
-                    strength = 1f
-                },
-                // Mountain grass
-                new TerrainRule
-                {
-                    ruleName = "Alpine Grass",
-                    terrainType = TerrainType.Grass,
-                    previewColor = new Color(0.3f, 0.5f, 0.3f),
-                    minHeight = 0.3f,
-                    maxHeight = 0.8f,
-                    heightBlend = 0.15f,
-                    minSlope = 0f,
-                    maxSlope = 0.6f,
-                    priority = 5,
-                    strength = 1f
-                },
-                // Gravel slopes
-                new TerrainRule
-                {
-                    ruleName = "Gravel Slopes",
-                    terrainType = TerrainType.Gravel,
-                    previewColor = new Color(0.5f, 0.5f, 0.55f),
-                    minHeight = 0.25f,
-                    maxHeight = 0.7f,
-                    heightBlend = 0.12f,
-                    minSlope = 0.4f,
-                    maxSlope = 1.2f,
-                    priority = 6,
-                    strength = 1f
-                }
-            };
+            // === ZONE-BASED TERRAIN RULES ===
+            // Each zone has a fallback, then specific overrides
 
-            // Resource rules - mountains have valuable ores
+            preset.terrainRules = new List<TerrainRule>
+    {
+        // ========================================
+        // UPPER ZONE FALLBACK (0.55-1.0) → ROCK
+        // ========================================
+        new TerrainRule
+        {
+            ruleName = "Upper Zone Base",
+            terrainType = TerrainType.Rock,
+            previewColor = new Color(0.42f, 0.4f, 0.4f),
+            minHeight = 0.55f,
+            maxHeight = 1f,
+            heightBlend = 0.15f,  // Smooth blend down
+            minSlope = 0f,
+            maxSlope = 2f,
+            priority = 1,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.2f
+        },
+        
+        // ========================================
+        // MID ZONE FALLBACK (0.15-0.65) → GRASS
+        // ========================================
+        new TerrainRule
+        {
+            ruleName = "Mid Zone Base",
+            terrainType = TerrainType.Grass,
+            previewColor = new Color(0.4f, 0.6f, 0.35f),
+            minHeight = 0.15f,
+            maxHeight = 0.65f,
+            heightBlend = 0.15f,  // Smooth blend both ways
+            minSlope = 0f,
+            maxSlope = 2f,
+            priority = 1,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.25f
+        },
+        
+        // ========================================
+        // LOWER ZONE FALLBACK (0.0-0.25) → DIRT/SAND
+        // ========================================
+        new TerrainRule
+        {
+            ruleName = "Lower Zone Base",
+            terrainType = TerrainType.Dirt,
+            previewColor = new Color(0.5f, 0.42f, 0.32f),
+            minHeight = 0f,
+            maxHeight = 0.25f,
+            heightBlend = 0.15f,  // Smooth blend up
+            minSlope = 0f,
+            maxSlope = 2f,
+            priority = 1,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.3f
+        },
+        
+        // ========================================
+        // UPPER ZONE OVERRIDES
+        // ========================================
+        
+        // Snow on flat high areas
+        new TerrainRule
+        {
+            ruleName = "Snow Caps",
+            terrainType = TerrainType.Snow,
+            previewColor = new Color(0.95f, 0.95f, 1f),
+            minHeight = 0.7f,
+            maxHeight = 1f,
+            heightBlend = 0.1f,
+            minSlope = 0f,
+            maxSlope = 0.4f,  // Gentle only
+            priority = 10,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.15f
+        },
+        
+        // Gravel on medium slopes in upper zone
+        new TerrainRule
+        {
+            ruleName = "High Scree",
+            terrainType = TerrainType.Gravel,
+            previewColor = new Color(0.52f, 0.5f, 0.53f),
+            minHeight = 0.6f,
+            maxHeight = 0.85f,
+            heightBlend = 0.1f,
+            minSlope = 0.35f,
+            maxSlope = 0.75f,
+            priority = 7,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.3f
+        },
+        
+        // ========================================
+        // MID ZONE OVERRIDES
+        // ========================================
+        
+        // Gravel on medium slopes in mid zone
+        new TerrainRule
+        {
+            ruleName = "Mid Scree",
+            terrainType = TerrainType.Gravel,
+            previewColor = new Color(0.5f, 0.48f, 0.5f),
+            minHeight = 0.3f,
+            maxHeight = 0.65f,
+            heightBlend = 0.1f,
+            minSlope = 0.4f,
+            maxSlope = 0.8f,
+            priority = 6,
+            strength = 1f,
+            useNoise = true,
+            noiseInfluence = 0.3f
+        },
+        
+        // Sparse vegetation in mid-high transition
+        new TerrainRule
+        {
+            ruleName = "Sparse Tundra",
+            terrainType = TerrainType.Tundra,
+            previewColor = new Color(0.45f, 0.52f, 0.45f),
+            minHeight = 0.5f,
+            maxHeight = 0.7f,
+            heightBlend = 0.12f,
+            minSlope = 0f,
+            maxSlope = 0.3f,
+            priority = 5,
+            strength = 0.8f,
+            useNoise = true,
+            noiseInfluence = 0.35f
+        },
+        
+        // ========================================
+        // LOWER ZONE OVERRIDES
+        // ========================================
+        
+        // Sand near water
+        new TerrainRule
+        {
+            ruleName = "Riverbank Sand",
+            terrainType = TerrainType.Sand,
+            previewColor = new Color(0.85f, 0.75f, 0.55f),
+            minHeight = 0f,
+            maxHeight = 0.15f,
+            heightBlend = 0.08f,
+            minSlope = 0f,
+            maxSlope = 0.3f,
+            priority = 4,
+            strength = 0.7f,
+            useNoise = true,
+            noiseInfluence = 0.4f
+        },
+        
+        // ========================================
+        // UNIVERSAL OVERRIDES (work in any zone)
+        // ========================================
+        
+        // Very steep = always rock
+        new TerrainRule
+        {
+            ruleName = "Cliff Faces",
+            terrainType = TerrainType.Rock,
+            previewColor = new Color(0.38f, 0.36f, 0.36f),
+            minHeight = 0f,
+            maxHeight = 1f,
+            heightBlend = 0.05f,
+            minSlope = 0.8f,  // Very steep
+            maxSlope = 2f,
+            priority = 9,
+            strength = 1f,
+            useNoise = false,
+            noiseInfluence = 0f
+        }
+    };
+
+            // Resource rules unchanged
             preset.resourceRules = new List<ResourcePlacementRule>
-            {
-                // Iron ore in rocky areas
-                new ResourcePlacementRule
-                {
-                    ruleName = "Iron Deposits",
-                    resourceType = ResourceType.IronOre,
-                    validTerrainTypes = new List<TerrainType> { TerrainType.Rock, TerrainType.Gravel },
-                    minHeight = 0.4f,
-                    maxHeight = 0.9f,
-                    minSlope = 0.3f,
-                    maxSlope = 2f,
-                    spawnProbability = 0.15f,
-                    minDensity = 80,
-                    maxDensity = 200,
-                    useClustering = true,
-                    clusterScale = 4f,
-                    clusterThreshold = 0.65f
-                },
-                // Gold in high peaks
-                new ResourcePlacementRule
-                {
-                    ruleName = "Gold Veins",
-                    resourceType = ResourceType.GoldOre,
-                    validTerrainTypes = new List<TerrainType> { TerrainType.Rock },
-                    minHeight = 0.7f,
-                    maxHeight = 1f,
-                    minSlope = 0f,
-                    maxSlope = 2f,
-                    spawnProbability = 0.05f,
-                    minDensity = 50,
-                    maxDensity = 150,
-                    useClustering = true,
-                    clusterScale = 5f,
-                    clusterThreshold = 0.7f
-                },
-                // Stone everywhere
-                new ResourcePlacementRule
-                {
-                    ruleName = "Stone",
-                    resourceType = ResourceType.Stone,
-                    validTerrainTypes = new List<TerrainType> { TerrainType.Rock, TerrainType.Gravel },
-                    minHeight = 0.2f,
-                    maxHeight = 1f,
-                    minSlope = 0f,
-                    maxSlope = 2f,
-                    spawnProbability = 0.3f,
-                    minDensity = 100,
-                    maxDensity = 255,
-                    useClustering = false
-                }
-            };
+    {
+        new ResourcePlacementRule
+        {
+            ruleName = "Iron Deposits",
+            resourceType = ResourceType.IronOre,
+            validTerrainTypes = new List<TerrainType> { TerrainType.Rock, TerrainType.Gravel },
+            minHeight = 0.4f,
+            maxHeight = 0.9f,
+            minSlope = 0.3f,
+            maxSlope = 2f,
+            spawnProbability = 0.15f,
+            minDensity = 80,
+            maxDensity = 200,
+            useClustering = true,
+            clusterScale = 4f,
+            clusterThreshold = 0.65f
+        },
+        new ResourcePlacementRule
+        {
+            ruleName = "Gold Veins",
+            resourceType = ResourceType.GoldOre,
+            validTerrainTypes = new List<TerrainType> { TerrainType.Rock },
+            minHeight = 0.7f,
+            maxHeight = 1f,
+            minSlope = 0f,
+            maxSlope = 2f,
+            spawnProbability = 0.05f,
+            minDensity = 50,
+            maxDensity = 150,
+            useClustering = true,
+            clusterScale = 5f,
+            clusterThreshold = 0.7f
+        },
+        new ResourcePlacementRule
+        {
+            ruleName = "Stone",
+            resourceType = ResourceType.Stone,
+            validTerrainTypes = new List<TerrainType> { TerrainType.Rock, TerrainType.Gravel },
+            minHeight = 0.2f,
+            maxHeight = 1f,
+            minSlope = 0f,
+            maxSlope = 2f,
+            spawnProbability = 0.3f,
+            minDensity = 100,
+            maxDensity = 255,
+            useClustering = false
+        }
+    };
 
             return preset;
         }

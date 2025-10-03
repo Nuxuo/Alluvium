@@ -78,6 +78,18 @@ public class TerrainGenerator : MonoBehaviour
             voxelMeshGenerator = new MeshGenerator();
     }
 
+    private void EnsureDataManager()
+    {
+        if (dataManager == null)
+        {
+            dataManager = GetComponent<TerrainDataManager>();
+            if (dataManager == null)
+            {
+                dataManager = gameObject.AddComponent<TerrainDataManager>();
+            }
+        }
+    }
+
     /// <summary>
     /// Load biome preset - either from asset or quick preset
     /// </summary>
@@ -435,6 +447,8 @@ public class TerrainGenerator : MonoBehaviour
 
     private void InitializeDataManager()
     {
+        EnsureDataManager();
+
         var biome = GetCurrentBiome();
 
         // Extract height data without border

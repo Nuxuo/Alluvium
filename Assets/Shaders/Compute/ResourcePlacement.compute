@@ -1,0 +1,152 @@
+#pragma kernel CSMain
+
+#include "FastNoise.hlsl"
+
+// Input
+StructuredBuffer<float> heightMap;
+StructuredBuffer<uint> terrainData;
+
+// Resource placement rule (matches C# ResourcePlacementRule)
+struct ResourceRule
+{
+    int resourceType;
+    uint validTerrainMask; // Bitmask of valid terrain types
+    float minHeight;
+    float maxHeight;
+    float minSlope;
+    float maxSlope;
+    float spawnProbability;
+    int minDensity;
+    int maxDensity;
+    int useClustering;
+    float clusterScale;
+    float clusterThreshold;
+    float padding1;
+    float padding2;
+};
+
+StructuredBuffer<ResourceRule> resourceRules;
+
+// Output - stores both resource type and density
+RWStructuredBuffer<uint> resourceData; // Lower 16 bits = type, upper 16 bits = density
+
+// Parameters
+int mapSize;
+int mapSizeWithBorder;
+int borderSize;
+float elevationScale;
+float cellSize;
+int numResourceRules;
+int seed;
+
+// Get height at position
+float GetHeight(int x, int z)
+{
+    x = clamp(x, 0, mapSize - 1);
+    z = clamp(z, 0, mapSize - 1);
+    
+    int borderedIndex = (z + borderSize) * mapSizeWithBorder + (x + borderSize);
+    return heightMap[borderedIndex] * elevationScale;
+}
+
+// Calculate slope
+float CalculateSlope(int x, int z)
+{
+    float heightC = GetHeight(x, z);
+    float heightL = GetHeight(max(0, x - 1), z);
+    float heightR = GetHeight(min(mapSize - 1, x + 1), z);
+    float heightD = GetHeight(x, max(0, z - 1));
+    float heightU = GetHeight(x, min(mapSize - 1, z + 1));
+    
+    float dx = (heightR - heightL) / (2.0 * cellSize);
+    float dz = (heightU - heightD) / (2.0 * cellSize);
+    
+    return sqrt(dx * dx + dz * dz);
+}
+
+// Hash function for pseudo-random numbers
+float Hash(int x, int z, int extraSeed)
+{
+    int h = seed + extraSeed;
+    h = (h ^ x) * 1664525;
+    h = (h ^ z) * 1013904223;
+    h = h ^ (h >> 16);
+    return float(h & 0x7FFFFFFF) / 2147483647.0;
+}
+
+// Check if terrain type is in valid mask
+bool IsTerrainValid(uint terrainType, uint validMask)
+{
+    return (validMask & (1u << terrainType)) != 0;
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint) mapSize || id.y >= (uint) mapSize)
+        return;
+    
+    int x = (int) id.x;
+    int z = (int) id.y;
+    int outputIndex = z * mapSize + x;
+    
+    // Get terrain info
+    uint terrainType = terrainData[outputIndex];
+    
+    // Get normalized height
+    int borderedIndex = (z + borderSize) * mapSizeWithBorder + (x + borderSize);
+    float normalizedHeight = heightMap[borderedIndex];
+    
+    // Calculate slope
+    float slope = CalculateSlope(x, z);
+    
+    // Default: no resource
+    resourceData[outputIndex] = 0;
+    
+    // Try each resource rule
+    for (int i = 0; i < numResourceRules; i++)
+    {
+        ResourceRule rule = resourceRules[i];
+        
+        // Check if terrain type is valid for this resource
+        if (!IsTerrainValid(terrainType, rule.validTerrainMask))
+            continue;
+        
+        // Check height range
+        if (normalizedHeight < rule.minHeight || normalizedHeight > rule.maxHeight)
+            continue;
+        
+        // Check slope range
+        if (slope < rule.minSlope || slope > rule.maxSlope)
+            continue;
+        
+        // Probability check
+        float roll = Hash(x, z, i * 12345);
+        if (roll > rule.spawnProbability)
+            continue;
+        
+        // Clustering check if enabled
+        if (rule.useClustering != 0)
+        {
+            fnl_state state = fnlCreateState(seed + i * 7919);
+            state.noise_type = FNL_NOISE_OPENSIMPLEX2;
+            state.frequency = rule.clusterScale / mapSize;
+            
+            float clusterNoise = fnlGetNoise2D(state, x, z);
+            clusterNoise = (clusterNoise + 1.0) * 0.5; // Remap to [0, 1]
+            
+            if (clusterNoise < rule.clusterThreshold)
+                continue;
+        }
+        
+        // Place resource!
+        float densityRoll = Hash(x, z, i * 54321 + 1);
+        int density = rule.minDensity + int(densityRoll * (rule.maxDensity - rule.minDensity));
+        density = clamp(density, 0, 255);
+        
+        // Pack: lower 16 bits = resource type, upper 16 bits = density
+        resourceData[outputIndex] = (uint(density) << 16) | uint(rule.resourceType);
+        
+        break; // Only one resource per cell
+    }
+}
