@@ -6,8 +6,8 @@ using VoxelTerrain.Interfaces;
 namespace VoxelTerrain.Generators
 {
     /// <summary>
-    /// Generates Minecraft-style voxel terrain meshes with optimized face culling
-    /// Now uses stored BlockData for block type assignment
+    /// Generates voxel-style terrain meshes from terrain data
+    /// Now uses TerrainType instead of BlockType
     /// </summary>
     public class MeshGenerator : IMeshGenerator
     {
@@ -21,7 +21,7 @@ namespace VoxelTerrain.Generators
             float cellSize = (data.scale * 2f) / (data.mapSize - 1);
             float actualVoxelSize = cellSize * data.voxelSize;
 
-            // Create height grid from stored block data
+            // Create height grid
             float[,] heightGrid = new float[data.mapSize, data.mapSize];
 
             for (int z = 0; z < data.mapSize; z++)
@@ -38,7 +38,7 @@ namespace VoxelTerrain.Generators
                 }
             }
 
-            // Generate top surfaces using stored block data
+            // Generate voxel mesh
             for (int z = 0; z < data.mapSize; z++)
             {
                 for (int x = 0; x < data.mapSize; x++)
@@ -47,9 +47,11 @@ namespace VoxelTerrain.Generators
                     Vector3 basePos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * data.scale;
                     float height = heightGrid[x, z];
 
-                    // Get block type from stored data
-                    BlockType blockType = data.blockData.GetBlockType(x, z);
-                    Color blockColor = GetBlockTypeColor(blockType);
+                    // Get terrain type from block data (stored as uint)
+                    uint terrainTypeData = data.blockData.Data[z * data.mapSize + x];
+                    TerrainType terrainType = (TerrainType)terrainTypeData;
+
+                    Color terrainColor = GetTerrainColor(terrainType);
 
                     // Create top face
                     float halfCell = cellSize * 0.5f;
@@ -64,7 +66,7 @@ namespace VoxelTerrain.Generators
                     for (int i = 0; i < 4; i++)
                     {
                         uvs.Add(new Vector2(uvValue, uvValue));
-                        colors.Add(blockColor);
+                        colors.Add(terrainColor);
                     }
 
                     triangles.AddRange(new int[] {
@@ -74,11 +76,11 @@ namespace VoxelTerrain.Generators
 
                     // Generate vertical sides
                     GenerateVerticalSides(x, z, data.mapSize, heightGrid, basePos, height, halfCell,
-                                        uvValue, blockColor, verts, triangles, uvs, colors, data.elevationScale, data.blockData);
+                                        uvValue, terrainColor, verts, triangles, uvs, colors);
 
                     // Add bottom faces at edges
                     GenerateEdgeFaces(x, z, data.mapSize, basePos, height, halfCell,
-                                    uvValue, blockColor, verts, triangles, uvs, colors, data.elevationScale);
+                                    uvValue, terrainColor, verts, triangles, uvs, colors);
                 }
             }
 
@@ -101,28 +103,20 @@ namespace VoxelTerrain.Generators
             return mesh;
         }
 
-        private Color GetBlockTypeColor(BlockType type)
+        private Color GetTerrainColor(TerrainType type)
         {
-            switch (type)
-            {
-                case BlockType.Sand:
-                    return new Color(1, 0, 0, 1); // Red channel
-                case BlockType.Snow:
-                    return new Color(0, 1, 0, 1); // Green channel
-                case BlockType.Rock:
-                    return new Color(0, 0, 0, 1); // Black (will add new channel)
-                case BlockType.Dirt:
-                default:
-                    return new Color(0, 0, 1, 1); // Blue channel
-            }
+            // Encode terrain type in vertex color for shader
+            // Using R channel to store type index (0-7)
+            float typeIndex = (float)type / 10f; // Simple encoding
+
+            return new Color(typeIndex, 0, 0, 1);
         }
 
         private void GenerateVerticalSides(int x, int z, int mapSize, float[,] heightGrid,
                                           Vector3 basePos, float height, float halfCell,
-                                          float uvValue, Color blockColor,
+                                          float uvValue, Color terrainColor,
                                           List<Vector3> verts, List<int> triangles,
-                                          List<Vector2> uvs, List<Color> colors, float elevationScale,
-                                          Storage.BlockData blockData)
+                                          List<Vector2> uvs, List<Color> colors)
         {
             // Check right neighbor (positive X)
             if (x < mapSize - 1)
@@ -135,7 +129,7 @@ namespace VoxelTerrain.Generators
                         basePos + new Vector3(halfCell, neighborHeight, halfCell),
                         basePos + new Vector3(halfCell, height, halfCell),
                         basePos + new Vector3(halfCell, height, -halfCell),
-                        uvValue, blockColor);
+                        uvValue, terrainColor);
                 }
             }
 
@@ -150,7 +144,7 @@ namespace VoxelTerrain.Generators
                         basePos + new Vector3(-halfCell, neighborHeight, halfCell),
                         basePos + new Vector3(-halfCell, height, halfCell),
                         basePos + new Vector3(halfCell, height, halfCell),
-                        uvValue, blockColor);
+                        uvValue, terrainColor);
                 }
             }
 
@@ -165,7 +159,7 @@ namespace VoxelTerrain.Generators
                         basePos + new Vector3(-halfCell, neighborHeight, -halfCell),
                         basePos + new Vector3(-halfCell, height, -halfCell),
                         basePos + new Vector3(-halfCell, height, halfCell),
-                        uvValue, blockColor);
+                        uvValue, terrainColor);
                 }
             }
 
@@ -180,15 +174,15 @@ namespace VoxelTerrain.Generators
                         basePos + new Vector3(halfCell, neighborHeight, -halfCell),
                         basePos + new Vector3(halfCell, height, -halfCell),
                         basePos + new Vector3(-halfCell, height, -halfCell),
-                        uvValue, blockColor);
+                        uvValue, terrainColor);
                 }
             }
         }
 
         private void GenerateEdgeFaces(int x, int z, int mapSize, Vector3 basePos,
                                       float height, float halfCell, float uvValue,
-                                      Color blockColor, List<Vector3> verts, List<int> triangles,
-                                      List<Vector2> uvs, List<Color> colors, float elevationScale)
+                                      Color terrainColor, List<Vector3> verts, List<int> triangles,
+                                      List<Vector2> uvs, List<Color> colors)
         {
             if (x == 0)
             {
@@ -197,7 +191,7 @@ namespace VoxelTerrain.Generators
                     basePos + new Vector3(-halfCell, 0, -halfCell),
                     basePos + new Vector3(-halfCell, height, -halfCell),
                     basePos + new Vector3(-halfCell, height, halfCell),
-                    uvValue, blockColor);
+                    uvValue, terrainColor);
             }
             if (x == mapSize - 1)
             {
@@ -206,7 +200,7 @@ namespace VoxelTerrain.Generators
                     basePos + new Vector3(halfCell, 0, halfCell),
                     basePos + new Vector3(halfCell, height, halfCell),
                     basePos + new Vector3(halfCell, height, -halfCell),
-                    uvValue, blockColor);
+                    uvValue, terrainColor);
             }
             if (z == 0)
             {
@@ -215,7 +209,7 @@ namespace VoxelTerrain.Generators
                     basePos + new Vector3(-halfCell, 0, -halfCell),
                     basePos + new Vector3(-halfCell, height, -halfCell),
                     basePos + new Vector3(halfCell, height, -halfCell),
-                    uvValue, blockColor);
+                    uvValue, terrainColor);
             }
             if (z == mapSize - 1)
             {
@@ -224,12 +218,12 @@ namespace VoxelTerrain.Generators
                     basePos + new Vector3(halfCell, 0, halfCell),
                     basePos + new Vector3(halfCell, height, halfCell),
                     basePos + new Vector3(-halfCell, height, halfCell),
-                    uvValue, blockColor);
+                    uvValue, terrainColor);
             }
         }
 
         private void AddVerticalQuad(List<Vector3> verts, List<int> triangles, List<Vector2> uvs, List<Color> colors,
-                                      Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, float uvValue, Color blockColor)
+                                      Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, float uvValue, Color terrainColor)
         {
             int startIdx = verts.Count;
             verts.Add(v0);
@@ -241,7 +235,7 @@ namespace VoxelTerrain.Generators
             for (int i = 0; i < 4; i++)
             {
                 uvs.Add(uv);
-                colors.Add(blockColor);
+                colors.Add(terrainColor);
             }
 
             triangles.AddRange(new int[] {
@@ -262,14 +256,17 @@ namespace VoxelTerrain.Generators
                 Vector2 percent = new Vector2(x / (data.mapSize - 1f), 0);
                 Vector3 basePos = new Vector3(percent.x * 2 - 1, 0, -1) * data.scale;
                 float height = heightGrid[x, 0];
-                Color blockColor = GetBlockTypeColor(blockData.GetBlockType(x, 0));
+
+                uint terrainTypeData = blockData.Data[x];
+                TerrainType terrainType = (TerrainType)terrainTypeData;
+                Color terrainColor = GetTerrainColor(terrainType);
 
                 AddVerticalQuad(verts, triangles, uvs, colors,
                     basePos + new Vector3(halfCell, skirtY, -halfCell),
                     basePos + new Vector3(-halfCell, skirtY, -halfCell),
                     basePos + new Vector3(-halfCell, height, -halfCell),
                     basePos + new Vector3(halfCell, height, -halfCell),
-                    0, blockColor);
+                    0, terrainColor);
 
                 if (x < data.mapSize - 1)
                 {
@@ -279,12 +276,66 @@ namespace VoxelTerrain.Generators
                         nextPos + new Vector3(-halfCell, skirtY, -halfCell),
                         nextPos + new Vector3(-halfCell, skirtY, halfCell),
                         basePos + new Vector3(halfCell, skirtY, halfCell),
-                        0, blockColor);
+                        0, terrainColor);
                 }
             }
 
-            // Top edge, left edge, right edge (similar pattern with blockData lookups)
-            // ... (rest of skirt generation using blockData.GetBlockType())
+            // Top edge (z = mapSize - 1)
+            for (int x = 0; x < data.mapSize; x++)
+            {
+                Vector2 percent = new Vector2(x / (data.mapSize - 1f), 1);
+                Vector3 basePos = new Vector3(percent.x * 2 - 1, 0, 1) * data.scale;
+                float height = heightGrid[x, data.mapSize - 1];
+
+                uint terrainTypeData = blockData.Data[(data.mapSize - 1) * data.mapSize + x];
+                TerrainType terrainType = (TerrainType)terrainTypeData;
+                Color terrainColor = GetTerrainColor(terrainType);
+
+                AddVerticalQuad(verts, triangles, uvs, colors,
+                    basePos + new Vector3(-halfCell, skirtY, halfCell),
+                    basePos + new Vector3(halfCell, skirtY, halfCell),
+                    basePos + new Vector3(halfCell, height, halfCell),
+                    basePos + new Vector3(-halfCell, height, halfCell),
+                    0, terrainColor);
+            }
+
+            // Left edge (x = 0)
+            for (int z = 0; z < data.mapSize; z++)
+            {
+                Vector2 percent = new Vector2(0, z / (data.mapSize - 1f));
+                Vector3 basePos = new Vector3(-1, 0, percent.y * 2 - 1) * data.scale;
+                float height = heightGrid[0, z];
+
+                uint terrainTypeData = blockData.Data[z * data.mapSize];
+                TerrainType terrainType = (TerrainType)terrainTypeData;
+                Color terrainColor = GetTerrainColor(terrainType);
+
+                AddVerticalQuad(verts, triangles, uvs, colors,
+                    basePos + new Vector3(-halfCell, skirtY, halfCell),
+                    basePos + new Vector3(-halfCell, skirtY, -halfCell),
+                    basePos + new Vector3(-halfCell, height, -halfCell),
+                    basePos + new Vector3(-halfCell, height, halfCell),
+                    0, terrainColor);
+            }
+
+            // Right edge (x = mapSize - 1)
+            for (int z = 0; z < data.mapSize; z++)
+            {
+                Vector2 percent = new Vector2(1, z / (data.mapSize - 1f));
+                Vector3 basePos = new Vector3(1, 0, percent.y * 2 - 1) * data.scale;
+                float height = heightGrid[data.mapSize - 1, z];
+
+                uint terrainTypeData = blockData.Data[z * data.mapSize + (data.mapSize - 1)];
+                TerrainType terrainType = (TerrainType)terrainTypeData;
+                Color terrainColor = GetTerrainColor(terrainType);
+
+                AddVerticalQuad(verts, triangles, uvs, colors,
+                    basePos + new Vector3(halfCell, skirtY, -halfCell),
+                    basePos + new Vector3(halfCell, skirtY, halfCell),
+                    basePos + new Vector3(halfCell, height, halfCell),
+                    basePos + new Vector3(halfCell, height, -halfCell),
+                    0, terrainColor);
+            }
         }
     }
 }

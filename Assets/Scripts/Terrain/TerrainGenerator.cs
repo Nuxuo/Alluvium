@@ -1,16 +1,28 @@
-﻿using UnityEngine;
-using System.Collections.Generic;
+﻿using UnityEditor.SceneManagement;
+using UnityEngine;
 using VoxelTerrain.Data;
-using VoxelTerrain.Interfaces;
 using VoxelTerrain.Generators;
+using VoxelTerrain.Interfaces;
 using VoxelTerrain.Utilities;
 
 public class TerrainGenerator : MonoBehaviour
 {
-    [Header("Mesh Settings")]
+    [Header("Biome Selection")]
+    [SerializeField] private BiomePreset biomePreset;
+    [SerializeField] private bool useQuickPreset = true;
+    [SerializeField] private QuickPresetType quickPreset = QuickPresetType.Mountains;
+
+    public enum QuickPresetType
+    {
+        Mountains,
+        Desert,
+        Plains,
+        Highlands
+    }
+
+    [Header("Map Settings")]
     public int mapSize = 255;
     public float scale = 20;
-    public float elevationScale = 10;
     public int seed;
     public bool randomizeSeed;
 
@@ -20,16 +32,6 @@ public class TerrainGenerator : MonoBehaviour
     public bool generateVoxelSkirt = true;
     public Material voxelMaterial;
 
-    [Header("Block Type Generation")]
-    public ComputeShader blockTypeComputeShader;
-
-    [Header("Dynamic Block Type Configuration")]
-    [Tooltip("Define rules for each block type - they can overlap and blend!")]
-    public List<VoxelTerrain.Data.BlockTypeConfig> blockTypeConfigs = new List<VoxelTerrain.Data.BlockTypeConfig>();
-
-    [HideInInspector]
-    public bool needsDefaultConfigs = true;
-
     [Header("Water Settings")]
     public bool enableWater = true;
     [Range(0, 1)]
@@ -38,51 +40,37 @@ public class TerrainGenerator : MonoBehaviour
     public float waterScale = 1.0f;
     public float waterSkirtHeight = 5.0f;
 
-    [Header("Heightmap Generation")]
+    [Header("Compute Shaders")]
     public ComputeShader heightMapComputeShader;
-    public int numOctaves = 7;
-    public float persistence = .5f;
-    public float lacunarity = 2;
-    public float initialScale = 1.5f;
-
-    [Header("Erosion Settings")]
-    public ComputeShader erosion;
-    public int numErosionIterations = 50000;
-    public int erosionBrushRadius = 3;
-
-    // New variables for the erosion resistance map
-    [Header("Erosion Noise Map")]
+    public ComputeShader erosionShader;
     public ComputeShader noiseMapComputeShader;
-    public float noiseMapScale = 2.5f;
-    public int noiseMapOctaves = 4;
-    public float noiseMapPersistence = 0.5f;
-    public float noiseMapLacunarity = 2.0f;
+    public ComputeShader terrainAssignmentShader;
+    public ComputeShader resourcePlacementShader;
 
-    public int maxLifetime = 30;
-    public float sedimentCapacityFactor = 3;
-    public float minSedimentCapacity = .01f;
-    public float depositSpeed = 0.3f;
-    public float erodeSpeed = 0.3f;
-    public float evaporateSpeed = .01f;
-    public float gravity = 4;
-    public float startSpeed = 1;
-    public float startWater = 1;
-    [Range(0, 1)]
-    public float inertia = 0.3f;
+    // Internal data
+    private float[] heightmap;
+    private TerrainCell[] terrainData;
+    private Mesh mesh;
+    private Mesh waterMesh;
+    private int mapSizeWithBorder;
+    private int erosionBrushRadius;
 
-    // Internal
-    float[] map;
-    Mesh mesh;
-    Mesh waterMesh;
-    int mapSizeWithBorder;
-
-    MeshRenderer meshRenderer;
-    MeshFilter meshFilter;
-    MeshRenderer waterMeshRenderer;
-    MeshFilter waterMeshFilter;
-
-    // Voxel mesh generator
+    private MeshRenderer meshRenderer;
+    private MeshFilter meshFilter;
+    private MeshRenderer waterMeshRenderer;
+    private MeshFilter waterMeshFilter;
     private IMeshGenerator voxelMeshGenerator;
+    private TerrainDataManager dataManager;
+
+    private void Awake()
+    {
+        // Get or add data manager
+        dataManager = GetComponent<TerrainDataManager>();
+        if (dataManager == null)
+        {
+            dataManager = gameObject.AddComponent<TerrainDataManager>();
+        }
+    }
 
     private void EnsureGeneratorInitialized()
     {
@@ -90,88 +78,394 @@ public class TerrainGenerator : MonoBehaviour
             voxelMeshGenerator = new MeshGenerator();
     }
 
-    public void GenerateHeightMap()
+    /// <summary>
+    /// Load biome preset - either from asset or quick preset
+    /// </summary>
+    private BiomePreset GetCurrentBiome()
     {
-        mapSizeWithBorder = mapSize + erosionBrushRadius * 2;
-        map = GenerateHeightMapGPU(mapSizeWithBorder);
+        if (useQuickPreset)
+        {
+            switch (quickPreset)
+            {
+                case QuickPresetType.Mountains: return BiomePresets.CreateMountains();
+                case QuickPresetType.Desert: return BiomePresets.CreateDesert();
+                case QuickPresetType.Plains: return BiomePresets.CreatePlains();
+                case QuickPresetType.Highlands: return BiomePresets.CreateHighlands();
+            }
+        }
+
+        return biomePreset != null ? biomePreset : BiomePresets.CreatePlains();
     }
 
-    float[] GenerateHeightMapGPU(int mapSize)
+    public void GenerateCompleteWorld()
     {
-        seed = (randomizeSeed) ? Random.Range(-10000, 10000) : seed;
-        var prng = new System.Random(seed);
+        var biome = GetCurrentBiome();
 
-        Vector2[] offsets = new Vector2[numOctaves];
-        for (int i = 0; i < numOctaves; i++)
+        Debug.Log($"Generating {biome.biomeName} biome...");
+
+        // Step 1: Generate heightmap
+        GenerateHeightMap(biome);
+
+        // Step 2: Apply erosion
+        Erode(biome);
+
+        // Step 3: Assign terrain types
+        AssignTerrainTypes(biome);
+
+        // Step 4: Place resources
+        PlaceResources(biome);
+
+        // Step 5: Build mesh
+        ConstructMesh();
+
+        // Step 6: Initialize data manager
+        InitializeDataManager();
+
+        Debug.Log($"World generation complete! {terrainData.Length} cells generated.");
+    }
+
+    private void GenerateHeightMap(BiomePreset biome)
+    {
+        seed = randomizeSeed ? Random.Range(-10000, 10000) : seed;
+        erosionBrushRadius = biome.erosionBrushRadius;
+        mapSizeWithBorder = mapSize + erosionBrushRadius * 2;
+
+        var prng = new System.Random(seed);
+        Vector2[] offsets = new Vector2[biome.numOctaves];
+        for (int i = 0; i < biome.numOctaves; i++)
         {
             offsets[i] = new Vector2(prng.Next(-10000, 10000), prng.Next(-10000, 10000));
         }
+
         ComputeBuffer offsetsBuffer = new ComputeBuffer(offsets.Length, sizeof(float) * 2);
         offsetsBuffer.SetData(offsets);
         heightMapComputeShader.SetBuffer(0, "offsets", offsetsBuffer);
 
         int floatToIntMultiplier = 1000;
-        float[] map = new float[mapSize * mapSize];
-        // Initialize map with 0s for the compute shader
-        for (int i = 0; i < map.Length; i++) { map[i] = 0; }
+        heightmap = new float[mapSizeWithBorder * mapSizeWithBorder];
 
-        ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(float));
-        mapBuffer.SetData(map);
+        ComputeBuffer mapBuffer = new ComputeBuffer(heightmap.Length, sizeof(float));
+        mapBuffer.SetData(heightmap);
         heightMapComputeShader.SetBuffer(0, "heightMap", mapBuffer);
 
-        int[] minMaxHeight = { floatToIntMultiplier * numOctaves, 0 };
+        int[] minMaxHeight = { floatToIntMultiplier * biome.numOctaves, 0 };
         ComputeBuffer minMaxBuffer = new ComputeBuffer(minMaxHeight.Length, sizeof(int));
         minMaxBuffer.SetData(minMaxHeight);
         heightMapComputeShader.SetBuffer(0, "minMax", minMaxBuffer);
 
-        heightMapComputeShader.SetInt("mapSize", mapSize);
-        heightMapComputeShader.SetInt("octaves", numOctaves);
-        heightMapComputeShader.SetFloat("lacunarity", lacunarity);
-        heightMapComputeShader.SetFloat("persistence", persistence);
-        heightMapComputeShader.SetFloat("scaleFactor", initialScale);
+        heightMapComputeShader.SetInt("mapSize", mapSizeWithBorder);
+        heightMapComputeShader.SetInt("octaves", biome.numOctaves);
+        heightMapComputeShader.SetFloat("lacunarity", biome.lacunarity);
+        heightMapComputeShader.SetFloat("persistence", biome.persistence);
+        heightMapComputeShader.SetFloat("scaleFactor", biome.initialScale);
         heightMapComputeShader.SetInt("floatToIntMultiplier", floatToIntMultiplier);
-        heightMapComputeShader.SetInt("heightMapSize", map.Length);
+        heightMapComputeShader.SetInt("heightMapSize", heightmap.Length);
         heightMapComputeShader.SetInt("seed", seed);
 
-        ComputeHelper.Dispatch(heightMapComputeShader, map.Length);
+        ComputeHelper.Dispatch(heightMapComputeShader, heightmap.Length);
 
-        mapBuffer.GetData(map);
+        mapBuffer.GetData(heightmap);
         minMaxBuffer.GetData(minMaxHeight);
+
         mapBuffer.Release();
         minMaxBuffer.Release();
         offsetsBuffer.Release();
 
-        float minValue = (float)minMaxHeight[0] / (float)floatToIntMultiplier;
-        float maxValue = (float)minMaxHeight[1] / (float)floatToIntMultiplier;
+        float minValue = (float)minMaxHeight[0] / floatToIntMultiplier;
+        float maxValue = (float)minMaxHeight[1] / floatToIntMultiplier;
 
-        for (int i = 0; i < map.Length; i++)
+        for (int i = 0; i < heightmap.Length; i++)
         {
-            map[i] = Mathf.InverseLerp(minValue, maxValue, map[i]);
+            heightmap[i] = Mathf.InverseLerp(minValue, maxValue, heightmap[i]);
+        }
+    }
+
+    private void Erode(BiomePreset biome)
+    {
+        int numThreads = biome.erosionIterations / 1024;
+
+        // Generate erosion resistance map
+        float[] noiseMap = GenerateNoiseMap(mapSizeWithBorder);
+        ComputeBuffer noiseMapBuffer = new ComputeBuffer(noiseMap.Length, sizeof(float));
+        noiseMapBuffer.SetData(noiseMap);
+
+        ComputeBuffer mapBuffer = new ComputeBuffer(heightmap.Length, sizeof(float));
+        mapBuffer.SetData(heightmap);
+
+        var brushIndexOffsets = new System.Collections.Generic.List<int>();
+        var brushWeights = new System.Collections.Generic.List<float>();
+        CreateErosionBrush(ref brushIndexOffsets, ref brushWeights);
+
+        ComputeBuffer brushIndexBuffer = new ComputeBuffer(brushIndexOffsets.Count, sizeof(int));
+        ComputeBuffer brushWeightBuffer = new ComputeBuffer(brushWeights.Count, sizeof(float));
+        brushIndexBuffer.SetData(brushIndexOffsets);
+        brushWeightBuffer.SetData(brushWeights);
+
+        int[] randomIndices = new int[biome.erosionIterations];
+        System.Random prng = new System.Random(seed);
+        for (int i = 0; i < biome.erosionIterations; i++)
+        {
+            randomIndices[i] = prng.Next(erosionBrushRadius, mapSizeWithBorder - erosionBrushRadius) +
+                               prng.Next(erosionBrushRadius, mapSizeWithBorder - erosionBrushRadius) * mapSizeWithBorder;
         }
 
-        return map;
+        ComputeBuffer randomIndexBuffer = new ComputeBuffer(randomIndices.Length, sizeof(int));
+        randomIndexBuffer.SetData(randomIndices);
+
+        erosionShader.SetBuffer(0, "noiseMap", noiseMapBuffer);
+        erosionShader.SetBuffer(0, "map", mapBuffer);
+        erosionShader.SetBuffer(0, "randomIndices", randomIndexBuffer);
+        erosionShader.SetBuffer(0, "brushIndices", brushIndexBuffer);
+        erosionShader.SetBuffer(0, "brushWeights", brushWeightBuffer);
+
+        erosionShader.SetInt("mapSize", mapSizeWithBorder);
+        erosionShader.SetInt("brushLength", brushIndexOffsets.Count);
+        erosionShader.SetInt("borderSize", erosionBrushRadius);
+        erosionShader.SetInt("maxLifetime", 50);
+        erosionShader.SetFloat("inertia", 0.025f);
+        erosionShader.SetFloat("sedimentCapacityFactor", 8f);
+        erosionShader.SetFloat("minSedimentCapacity", 0.03f);
+        erosionShader.SetFloat("depositSpeed", 0.6f);
+        //erosionShader.SetFloat("erodeSpeed", 0.3f * biome.erosionStrength / 4f); // Normalize to biome strength
+        erosionShader.SetFloat("erodeSpeed", 0.3f); // Normalize to biome strength
+        erosionShader.SetFloat("evaporateSpeed", 0.05f);
+        erosionShader.SetFloat("gravity", 4f);
+        erosionShader.SetFloat("startSpeed", 1f);
+        erosionShader.SetFloat("startWater", 1f);
+
+        erosionShader.Dispatch(0, numThreads, 1, 1);
+
+        mapBuffer.GetData(heightmap);
+
+        mapBuffer.Release();
+        brushIndexBuffer.Release();
+        brushWeightBuffer.Release();
+        randomIndexBuffer.Release();
+        noiseMapBuffer.Release();
     }
 
-    public void Erode()
+    private void AssignTerrainTypes(BiomePreset biome)
     {
-        ErodeGPU();
+        // Initialize terrain data array
+        terrainData = new TerrainCell[mapSize * mapSize];
+
+        // Convert biome rules to compute shader format
+        // This would need a new compute shader similar to BlockTypeAssignment
+        // For now, assign on CPU as placeholder
+
+        float cellSize = (scale * 2f) / (mapSize - 1);
+
+        for (int z = 0; z < mapSize; z++)
+        {
+            for (int x = 0; x < mapSize; x++)
+            {
+                int borderedIndex = (z + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
+                float normalizedHeight = heightmap[borderedIndex];
+                float slope = CalculateSlope(x, z);
+
+                // Assign terrain type based on rules
+                TerrainType terrain = DetermineTerrainType(normalizedHeight, slope, biome.terrainRules);
+
+                int index = z * mapSize + x;
+                terrainData[index] = new TerrainCell(terrain, ResourceType.None, 0);
+            }
+        }
     }
 
-    // New function to generate the erosion resistance noise map
-    float[] GenerateNoiseMapGPU(int mapSize)
+    private TerrainType DetermineTerrainType(float height, float slope, System.Collections.Generic.List<TerrainRule> rules)
     {
-        float[] noiseMap = new float[mapSize * mapSize];
+        TerrainType bestType = TerrainType.Grass;
+        float bestScore = -1f;
+        int bestPriority = -1;
+
+        foreach (var rule in rules)
+        {
+            float score = 0f;
+
+            // Height check
+            if (height >= rule.minHeight && height <= rule.maxHeight)
+            {
+                float heightCenter = (rule.minHeight + rule.maxHeight) * 0.5f;
+                float distFromCenter = Mathf.Abs(height - heightCenter) / ((rule.maxHeight - rule.minHeight) * 0.5f);
+                float heightScore = 1f - distFromCenter;
+
+                // Slope check
+                if (slope >= rule.minSlope && slope <= rule.maxSlope)
+                {
+                    float slopeCenter = (rule.minSlope + rule.maxSlope) * 0.5f;
+                    float slopeDistFromCenter = Mathf.Abs(slope - slopeCenter) / ((rule.maxSlope - rule.minSlope) * 0.5f);
+                    float slopeScore = 1f - slopeDistFromCenter;
+
+                    score = heightScore * slopeScore * rule.strength;
+
+                    // Check if this is better
+                    if (rule.priority > bestPriority || (rule.priority == bestPriority && score > bestScore))
+                    {
+                        if (score > 0.1f)
+                        {
+                            bestType = rule.terrainType;
+                            bestScore = score;
+                            bestPriority = rule.priority;
+                        }
+                    }
+                }
+            }
+        }
+
+        return bestType;
+    }
+
+    private void PlaceResources(BiomePreset biome)
+    {
+        System.Random prng = new System.Random(seed + 12345);
+
+        for (int z = 0; z < mapSize; z++)
+        {
+            for (int x = 0; x < mapSize; x++)
+            {
+                int index = z * mapSize + x;
+                TerrainCell cell = terrainData[index];
+
+                float normalizedHeight = heightmap[(z + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius];
+                float slope = CalculateSlope(x, z);
+
+                foreach (var rule in biome.resourceRules)
+                {
+                    // Check if terrain type is valid
+                    if (!rule.validTerrainTypes.Contains(cell.terrainType))
+                        continue;
+
+                    // Check height range
+                    if (normalizedHeight < rule.minHeight || normalizedHeight > rule.maxHeight)
+                        continue;
+
+                    // Check slope range
+                    if (slope < rule.minSlope || slope > rule.maxSlope)
+                        continue;
+
+                    // Probability check
+                    float roll = (float)prng.NextDouble();
+                    if (roll > rule.spawnProbability)
+                        continue;
+
+                    // Clustering check if enabled
+                    if (rule.useClustering)
+                    {
+                        float clusterNoise = Mathf.PerlinNoise(x * rule.clusterScale / mapSize + seed,
+                                                                z * rule.clusterScale / mapSize + seed);
+                        if (clusterNoise < rule.clusterThreshold)
+                            continue;
+                    }
+
+                    // Place resource
+                    byte density = (byte)prng.Next(rule.minDensity, rule.maxDensity + 1);
+                    terrainData[index] = new TerrainCell(cell.terrainType, rule.resourceType, density);
+                    break; // Only one resource per cell
+                }
+            }
+        }
+    }
+
+    private float CalculateSlope(int x, int z)
+    {
+        float cellSize = (scale * 2f) / (mapSize - 1);
+
+        int borderedX = x + erosionBrushRadius;
+        int borderedZ = z + erosionBrushRadius;
+
+        float heightC = heightmap[borderedZ * mapSizeWithBorder + borderedX];
+        float heightL = heightmap[borderedZ * mapSizeWithBorder + Mathf.Max(0, borderedX - 1)];
+        float heightR = heightmap[borderedZ * mapSizeWithBorder + Mathf.Min(mapSizeWithBorder - 1, borderedX + 1)];
+        float heightD = heightmap[Mathf.Max(0, borderedZ - 1) * mapSizeWithBorder + borderedX];
+        float heightU = heightmap[Mathf.Min(mapSizeWithBorder - 1, borderedZ + 1) * mapSizeWithBorder + borderedX];
+
+        float dx = (heightR - heightL) / (2f * cellSize);
+        float dz = (heightU - heightD) / (2f * cellSize);
+
+        return Mathf.Sqrt(dx * dx + dz * dz);
+    }
+
+    private void ConstructMesh()
+    {
+        EnsureGeneratorInitialized();
+
+        var biome = GetCurrentBiome();
+
+        TerrainMeshData meshData = new TerrainMeshData
+        {
+            map = heightmap,
+            mapSize = mapSize,
+            mapSizeWithBorder = mapSizeWithBorder,
+            erosionBrushRadius = erosionBrushRadius,
+            scale = scale,
+            elevationScale = biome.elevationScale,
+            skirtHeight = 0,
+            voxelSize = voxelSize,
+            generateVoxelSkirt = generateVoxelSkirt,
+            blockData = new VoxelTerrain.Storage.BlockData(mapSize, mapSize)
+        };
+
+        // Convert terrain data to block data for rendering
+        for (int i = 0; i < terrainData.Length; i++)
+        {
+            meshData.blockData.Data[i] = (uint)terrainData[i].terrainType;
+        }
+
+        mesh = voxelMeshGenerator.GenerateMesh(meshData);
+
+        AssignMeshComponents();
+        meshFilter.sharedMesh = mesh;
+        meshRenderer.sharedMaterial = voxelMaterial;
+
+        if (voxelMaterial != null)
+        {
+            voxelMaterial.SetFloat("_MaxHeight", biome.elevationScale);
+            voxelMaterial.SetFloat("_WaterLevel", waterLevel * biome.elevationScale);
+        }
+
+        if (enableWater)
+        {
+            ConstructWaterMesh(biome);
+        }
+        else if (waterMeshRenderer != null)
+        {
+            waterMeshRenderer.enabled = false;
+        }
+    }
+
+    private void InitializeDataManager()
+    {
+        var biome = GetCurrentBiome();
+
+        // Extract height data without border
+        float[] cleanHeightmap = new float[mapSize * mapSize];
+        for (int z = 0; z < mapSize; z++)
+        {
+            for (int x = 0; x < mapSize; x++)
+            {
+                int cleanIndex = z * mapSize + x;
+                int borderedIndex = (z + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
+                cleanHeightmap[cleanIndex] = heightmap[borderedIndex];
+            }
+        }
+
+        dataManager.Initialize(mapSize, scale, biome.elevationScale, cleanHeightmap, terrainData);
+    }
+
+    private float[] GenerateNoiseMap(int size)
+    {
+        float[] noiseMap = new float[size * size];
         ComputeBuffer noiseMapBuffer = new ComputeBuffer(noiseMap.Length, sizeof(float));
         noiseMapBuffer.SetData(noiseMap);
         noiseMapComputeShader.SetBuffer(0, "noiseMap", noiseMapBuffer);
 
-        noiseMapComputeShader.SetInt("mapSize", mapSize);
+        noiseMapComputeShader.SetInt("mapSize", size);
         noiseMapComputeShader.SetInt("noiseMapSize", noiseMap.Length);
         noiseMapComputeShader.SetInt("seed", seed);
-        noiseMapComputeShader.SetFloat("scale", noiseMapScale);
-        noiseMapComputeShader.SetInt("octaves", noiseMapOctaves);
-        noiseMapComputeShader.SetFloat("persistence", noiseMapPersistence);
-        noiseMapComputeShader.SetFloat("lacunarity", noiseMapLacunarity);
+        noiseMapComputeShader.SetFloat("scale", 2.5f);
+        noiseMapComputeShader.SetInt("octaves", 4);
+        noiseMapComputeShader.SetFloat("persistence", 0.5f);
+        noiseMapComputeShader.SetFloat("lacunarity", 2.0f);
 
         ComputeHelper.Dispatch(noiseMapComputeShader, noiseMap.Length);
 
@@ -181,72 +475,8 @@ public class TerrainGenerator : MonoBehaviour
         return noiseMap;
     }
 
-    private void ErodeGPU()
-    {
-        int numThreads = numErosionIterations / 1024;
-
-        // Generate the noise map and create a buffer for it
-        float[] noiseMap = GenerateNoiseMapGPU(mapSizeWithBorder);
-        ComputeBuffer noiseMapBuffer = new ComputeBuffer(noiseMap.Length, sizeof(float));
-        noiseMapBuffer.SetData(noiseMap);
-
-        ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(float));
-        mapBuffer.SetData(map);
-
-        System.Collections.Generic.List<int> brushIndexOffsets = new System.Collections.Generic.List<int>();
-        System.Collections.Generic.List<float> brushWeights = new System.Collections.Generic.List<float>();
-        CreateErosionBrush(ref brushIndexOffsets, ref brushWeights);
-
-        ComputeBuffer brushIndexBuffer = new ComputeBuffer(brushIndexOffsets.Count, sizeof(int));
-        ComputeBuffer brushWeightBuffer = new ComputeBuffer(brushWeights.Count, sizeof(float));
-        brushIndexBuffer.SetData(brushIndexOffsets);
-        brushWeightBuffer.SetData(brushWeights);
-
-        int[] randomIndices = new int[numErosionIterations];
-        System.Random prng = new System.Random(seed);
-        for (int i = 0; i < numErosionIterations; i++)
-        {
-            randomIndices[i] = prng.Next(erosionBrushRadius, mapSizeWithBorder - erosionBrushRadius) +
-                               prng.Next(erosionBrushRadius, mapSizeWithBorder - erosionBrushRadius) * mapSizeWithBorder;
-        }
-
-        ComputeBuffer randomIndexBuffer = new ComputeBuffer(randomIndices.Length, sizeof(int));
-        randomIndexBuffer.SetData(randomIndices);
-
-        // Pass the new noiseMapBuffer to the erosion shader
-        erosion.SetBuffer(0, "noiseMap", noiseMapBuffer);
-        erosion.SetBuffer(0, "map", mapBuffer);
-        erosion.SetBuffer(0, "randomIndices", randomIndexBuffer);
-        erosion.SetBuffer(0, "brushIndices", brushIndexBuffer);
-        erosion.SetBuffer(0, "brushWeights", brushWeightBuffer);
-
-        erosion.SetInt("mapSize", mapSizeWithBorder);
-        erosion.SetInt("brushLength", brushIndexOffsets.Count);
-        erosion.SetInt("borderSize", erosionBrushRadius);
-        erosion.SetInt("maxLifetime", maxLifetime);
-        erosion.SetFloat("inertia", inertia);
-        erosion.SetFloat("sedimentCapacityFactor", sedimentCapacityFactor);
-        erosion.SetFloat("minSedimentCapacity", minSedimentCapacity);
-        erosion.SetFloat("depositSpeed", depositSpeed);
-        erosion.SetFloat("erodeSpeed", erodeSpeed);
-        erosion.SetFloat("evaporateSpeed", evaporateSpeed);
-        erosion.SetFloat("gravity", gravity);
-        erosion.SetFloat("startSpeed", startSpeed);
-        erosion.SetFloat("startWater", startWater);
-
-        erosion.Dispatch(0, numThreads, 1, 1);
-
-        mapBuffer.GetData(map);
-
-        // Release all buffers, including the new one
-        mapBuffer.Release();
-        brushIndexBuffer.Release();
-        brushWeightBuffer.Release();
-        randomIndexBuffer.Release();
-        noiseMapBuffer.Release();
-    }
-
-    private void CreateErosionBrush(ref System.Collections.Generic.List<int> brushIndexOffsets, ref System.Collections.Generic.List<float> brushWeights)
+    private void CreateErosionBrush(ref System.Collections.Generic.List<int> brushIndexOffsets,
+                                    ref System.Collections.Generic.List<float> brushWeights)
     {
         brushIndexOffsets.Clear();
         brushWeights.Clear();
@@ -273,72 +503,9 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
-    public void ConstructMesh()
+    private void ConstructWaterMesh(BiomePreset biome)
     {
-        EnsureGeneratorInitialized();
-
-        // Initialize default configs if needed
-        if (blockTypeConfigs == null || blockTypeConfigs.Count == 0 || needsDefaultConfigs)
-        {
-            SetupDefaultBlockConfigs();
-        }
-
-        TerrainMeshData meshData = new TerrainMeshData
-        {
-            map = map,
-            mapSize = mapSize,
-            mapSizeWithBorder = mapSizeWithBorder,
-            erosionBrushRadius = erosionBrushRadius,
-            scale = scale,
-            elevationScale = elevationScale,
-            skirtHeight = 0,
-            voxelSize = voxelSize,
-            generateVoxelSkirt = generateVoxelSkirt
-        };
-
-        // Generate block types using dynamic configuration
-        if (blockTypeComputeShader != null && blockTypeConfigs.Count > 0)
-        {
-            VoxelTerrain.Generators.BlockTypeGenerator.GenerateBlockTypes(
-                meshData,
-                blockTypeComputeShader,
-                seed,
-                blockTypeConfigs
-            );
-        }
-        else
-        {
-            if (blockTypeComputeShader == null)
-                Debug.LogError("Block Type Compute Shader is not assigned!");
-            if (blockTypeConfigs.Count == 0)
-                Debug.LogError("No block type configurations defined!");
-        }
-
-        mesh = voxelMeshGenerator.GenerateMesh(meshData);
-
-        AssignMeshComponents();
-        meshFilter.sharedMesh = mesh;
-        meshRenderer.sharedMaterial = voxelMaterial;
-
-        if (voxelMaterial != null)
-        {
-            voxelMaterial.SetFloat("_MaxHeight", elevationScale);
-            voxelMaterial.SetFloat("_WaterLevel", waterLevel * elevationScale);
-        }
-
-        if (enableWater)
-        {
-            ConstructWaterMesh();
-        }
-        else if (waterMeshRenderer != null)
-        {
-            waterMeshRenderer.enabled = false;
-        }
-    }
-
-    void ConstructWaterMesh()
-    {
-        float waterHeight = waterLevel * elevationScale;
+        float waterHeight = waterLevel * biome.elevationScale;
 
         Vector3[] waterVerts = new Vector3[8];
         int[] waterTriangles = new int[30];
@@ -402,7 +569,7 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
-    void AssignMeshComponents()
+    private void AssignMeshComponents()
     {
         string meshHolderName = "Mesh Holder";
         Transform meshHolder = transform.Find(meshHolderName);
@@ -427,7 +594,7 @@ public class TerrainGenerator : MonoBehaviour
         meshFilter = meshHolder.GetComponent<MeshFilter>();
     }
 
-    void AssignWaterMeshComponents()
+    private void AssignWaterMeshComponents()
     {
         string waterHolderName = "Water Holder";
         Transform waterHolder = transform.Find(waterHolderName);
@@ -450,94 +617,5 @@ public class TerrainGenerator : MonoBehaviour
 
         waterMeshRenderer = waterHolder.GetComponent<MeshRenderer>();
         waterMeshFilter = waterHolder.GetComponent<MeshFilter>();
-    }
-
-    public void SetupDefaultBlockConfigs()
-    {
-        blockTypeConfigs.Clear();
-
-        // EXAMPLE 1: Using Normalized Height Mode (0-1)
-        // Sand - Low elevations, gentle slopes
-        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
-        {
-            blockType = VoxelTerrain.Data.BlockType.Sand,
-            displayName = "Sand (Normalized)",
-            previewColor = new Color(0.85f, 0.75f, 0.55f),
-            heightMode = VoxelTerrain.Data.HeightMode.Normalized,
-            minHeight = 0f,
-            maxHeight = 0.35f,
-            heightBlendAmount = 0.12f,
-            minSlope = 0f,
-            maxSlope = 0.4f,
-            slopeBlendAmount = 0.1f,
-            priority = 5,
-            strength = 1f,
-            useNoiseVariation = true,
-            noiseInfluence = 0.3f
-        });
-
-        // EXAMPLE 2: Using Voxel Layer Mode (absolute layer numbers)
-        // Grass/Dirt - Layers 15 to 60
-        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
-        {
-            blockType = VoxelTerrain.Data.BlockType.Dirt,
-            displayName = "Grass/Dirt (Voxel Layers)",
-            previewColor = new Color(0.4f, 0.3f, 0.2f),
-            heightMode = VoxelTerrain.Data.HeightMode.VoxelLayers,
-            minVoxelLayer = 15,
-            maxVoxelLayer = 60,
-            voxelLayerBlend = 5,
-            minSlope = 0f,
-            maxSlope = 0.8f,
-            slopeBlendAmount = 0.15f,
-            priority = 3,
-            strength = 1f,
-            useNoiseVariation = true,
-            noiseInfluence = 0.25f
-        });
-
-        // EXAMPLE 3: Snow using Voxel Layers - Above layer 55
-        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
-        {
-            blockType = VoxelTerrain.Data.BlockType.Snow,
-            displayName = "Snow (Voxel Layers)",
-            previewColor = new Color(0.95f, 0.95f, 1f),
-            heightMode = VoxelTerrain.Data.HeightMode.VoxelLayers,
-            minVoxelLayer = 55,
-            maxVoxelLayer = 100, // Will auto-adjust to max terrain height
-            voxelLayerBlend = 4,
-            minSlope = 0f,
-            maxSlope = 2f,
-            slopeBlendAmount = 0.2f,
-            priority = 6,
-            strength = 1f,
-            useNoiseVariation = true,
-            noiseInfluence = 0.2f
-        });
-
-        // EXAMPLE 4: Rock on steep slopes - works with either mode
-        blockTypeConfigs.Add(new VoxelTerrain.Data.BlockTypeConfig
-        {
-            blockType = VoxelTerrain.Data.BlockType.Rock,
-            displayName = "Rock/Cliff (Normalized)",
-            previewColor = new Color(0.3f, 0.3f, 0.35f),
-            heightMode = VoxelTerrain.Data.HeightMode.Normalized,
-            minHeight = 0f,
-            maxHeight = 1f,
-            heightBlendAmount = 0.05f,
-            minSlope = 0.6f,
-            maxSlope = 2f,
-            slopeBlendAmount = 0.15f,
-            priority = 8,
-            strength = 1f,
-            useNoiseVariation = true,
-            noiseInfluence = 0.15f
-        });
-
-        needsDefaultConfigs = false;
-
-#if UNITY_EDITOR
-        UnityEditor.EditorUtility.SetDirty(this);
-#endif
     }
 }

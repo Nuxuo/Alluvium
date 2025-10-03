@@ -100,7 +100,6 @@ namespace VoxelTerrain.Storage
         {
             if (buffer.count != blockData.Length)
             {
-                Debug.LogError("Buffer size mismatch!");
                 return;
             }
 

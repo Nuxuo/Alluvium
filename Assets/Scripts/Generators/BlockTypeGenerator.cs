@@ -22,13 +22,11 @@ namespace VoxelTerrain.Generators
         {
             if (blockTypeShader == null)
             {
-                Debug.LogError("BlockType compute shader is not assigned!");
                 return;
             }
 
             if (blockConfigs == null || blockConfigs.Count == 0)
             {
-                Debug.LogError("No block type configurations provided!");
                 return;
             }
 
@@ -84,8 +82,6 @@ namespace VoxelTerrain.Generators
             heightMapBuffer.Release();
             blockDataBuffer.Release();
             configBuffer.Release();
-
-            Debug.Log($"Generated block types using {configData.Length} dynamic configurations");
         }
     }
 }

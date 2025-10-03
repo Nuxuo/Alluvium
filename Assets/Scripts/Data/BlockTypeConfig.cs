@@ -3,6 +3,15 @@ using UnityEngine;
 namespace VoxelTerrain.Data
 {
     /// <summary>
+    /// Height calculation mode for block type rules
+    /// </summary>
+    public enum HeightMode
+    {
+        Normalized = 0,  // Use 0-1 normalized height
+        VoxelLayers = 1  // Use absolute voxel layer numbers
+    }
+
+    /// <summary>
     /// Configuration for a single block type's generation rules
     /// Defines when and how a block type appears in the terrain
     /// </summary>
@@ -14,18 +23,33 @@ namespace VoxelTerrain.Data
         public string displayName = "Dirt";
         public Color previewColor = new Color(0.4f, 0.3f, 0.2f);
 
-        [Header("Height Rules")]
-        [Tooltip("Minimum height (0-1) where this block can appear")]
+        [Header("Height Mode")]
+        [Tooltip("Use normalized height (0-1) or absolute voxel layers")]
+        public HeightMode heightMode = HeightMode.Normalized;
+
+        [Header("Height Rules - Normalized (0-1)")]
+        [Tooltip("Minimum normalized height (0-1) where this block can appear")]
         [Range(0f, 1f)]
         public float minHeight = 0f;
 
-        [Tooltip("Maximum height (0-1) where this block can appear")]
+        [Tooltip("Maximum normalized height (0-1) where this block can appear")]
         [Range(0f, 1f)]
         public float maxHeight = 1f;
 
         [Tooltip("How smoothly this block blends at its height boundaries")]
         [Range(0.01f, 0.5f)]
         public float heightBlendAmount = 0.1f;
+
+        [Header("Height Rules - Voxel Layers (Absolute)")]
+        [Tooltip("Minimum voxel layer (0 = ground level)")]
+        public int minVoxelLayer = 0;
+
+        [Tooltip("Maximum voxel layer")]
+        public int maxVoxelLayer = 100;
+
+        [Tooltip("How many layers to blend at boundaries")]
+        [Range(1, 20)]
+        public int voxelLayerBlend = 5;
 
         [Header("Slope Rules")]
         [Tooltip("Minimum slope (0-2) where this block appears. 0=flat, 2=very steep")]
@@ -65,9 +89,13 @@ namespace VoxelTerrain.Data
             return new BlockTypeConfigData
             {
                 blockType = (int)blockType,
+                heightMode = (int)heightMode,
                 minHeight = minHeight,
                 maxHeight = maxHeight,
                 heightBlendAmount = heightBlendAmount,
+                minVoxelLayer = minVoxelLayer,
+                maxVoxelLayer = maxVoxelLayer,
+                voxelLayerBlend = voxelLayerBlend,
                 minSlope = minSlope,
                 maxSlope = maxSlope,
                 slopeBlendAmount = slopeBlendAmount,
@@ -87,9 +115,13 @@ namespace VoxelTerrain.Data
     public struct BlockTypeConfigData
     {
         public int blockType;
+        public int heightMode;
         public float minHeight;
         public float maxHeight;
         public float heightBlendAmount;
+        public int minVoxelLayer;
+        public int maxVoxelLayer;
+        public int voxelLayerBlend;
         public float minSlope;
         public float maxSlope;
         public float slopeBlendAmount;

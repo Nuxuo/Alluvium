@@ -421,10 +421,6 @@ namespace VoxelTerrain.Utilities
                 {
                     shader.SetBool(shaderVariableName, (bool)field.GetValue(settings));
                 }
-                else
-                {
-                    Debug.Log($"Type {fieldType} not implemented in ComputeHelper.SetParams");
-                }
             }
         }
 

@@ -114,166 +114,163 @@ float CalculateBlockFitness(BlockTypeConfig config, float normalizedHeight, floa
     if (config.heightMode == 0) // Normalized mode
     {
         float adjustedHeight = normalizedHeight + heightNoise;
-    {
+        
         // Full fitness in the middle of the range
-            float heightCenter = (config.minHeight + config.maxHeight) * 0.5;
-            float heightRange = config.maxHeight - config.minHeight;
+        float heightCenter = (config.minHeight + config.maxHeight) * 0.5;
+        float heightRange = config.maxHeight - config.minHeight;
         
         // Calculate distance from center (0 = center, 1 = edge)
-            float distFromCenter = abs(adjustedHeight - heightCenter) / (heightRange * 0.5);
+        float distFromCenter = abs(adjustedHeight - heightCenter) / (heightRange * 0.5);
         
         // Apply blend at edges
-            if (adjustedHeight < config.minHeight + config.heightBlendAmount)
-            {
-                heightFitness = SmoothStep(config.minHeight, config.minHeight + config.heightBlendAmount, adjustedHeight);
-            }
-            else if (adjustedHeight > config.maxHeight - config.heightBlendAmount)
-            {
-                heightFitness = 1.0 - SmoothStep(config.maxHeight - config.heightBlendAmount, config.maxHeight, adjustedHeight);
-            }
-            else
-            {
-                heightFitness = 1.0; // Full fitness in middle
-            }
-        }
-    else
-    {
-        // Outside range - check if we're in blend zone
-            if (adjustedHeight < config.minHeight)
-            {
-                float distFromMin = config.minHeight - adjustedHeight;
-                if (distFromMin < config.heightBlendAmount)
-                {
-                    heightFitness = SmoothStep(config.minHeight - config.heightBlendAmount, config.minHeight, adjustedHeight);
-                }
-            }
-            else if (adjustedHeight > config.maxHeight)
-            {
-                float distFromMax = adjustedHeight - config.maxHeight;
-                if (distFromMax < config.heightBlendAmount)
-                {
-                    heightFitness = 1.0 - SmoothStep(config.maxHeight, config.maxHeight + config.heightBlendAmount, adjustedHeight);
-                }
-            }
-        }
-    
-    // === SLOPE FITNESS ===
-        float slopeFitness = 0.0;
-    
-    // Check if within slope range
-        if (adjustedSlope >= config.minSlope && adjustedSlope <= config.maxSlope)
+        if (adjustedHeight < config.minHeight + config.heightBlendAmount)
         {
-        // Apply blend at edges
-            if (adjustedSlope < config.minSlope + config.slopeBlendAmount)
-            {
-                slopeFitness = SmoothStep(config.minSlope, config.minSlope + config.slopeBlendAmount, adjustedSlope);
-            }
-            else if (adjustedSlope > config.maxSlope - config.slopeBlendAmount)
-            {
-                slopeFitness = 1.0 - SmoothStep(config.maxSlope - config.slopeBlendAmount, config.maxSlope, adjustedSlope);
-            }
-            else
-            {
-                slopeFitness = 1.0;
-            }
+            heightFitness = SmoothStep(config.minHeight, config.minHeight + config.heightBlendAmount, adjustedHeight);
+        }
+        else if (adjustedHeight > config.maxHeight - config.heightBlendAmount)
+        {
+            heightFitness = 1.0 - SmoothStep(config.maxHeight - config.heightBlendAmount, config.maxHeight, adjustedHeight);
         }
         else
         {
-        // Outside range - check blend zones
-            if (adjustedSlope < config.minSlope)
+            heightFitness = 1.0; // Full fitness in middle
+        }
+    }
+    else
+    {
+        // Outside range - check if we're in blend zone
+        float adjustedHeight = normalizedHeight + heightNoise;
+        
+        if (adjustedHeight < config.minHeight)
+        {
+            float distFromMin = config.minHeight - adjustedHeight;
+            if (distFromMin < config.heightBlendAmount)
             {
-                float distFromMin = config.minSlope - adjustedSlope;
-                if (distFromMin < config.slopeBlendAmount)
-                {
-                    slopeFitness = SmoothStep(config.minSlope - config.slopeBlendAmount, config.minSlope, adjustedSlope);
-                }
-            }
-            else if (adjustedSlope > config.maxSlope)
-            {
-                float distFromMax = adjustedSlope - config.maxSlope;
-                if (distFromMax < config.slopeBlendAmount)
-                {
-                    slopeFitness = 1.0 - SmoothStep(config.maxSlope, config.maxSlope + config.slopeBlendAmount, adjustedSlope);
-                }
+                heightFitness = SmoothStep(config.minHeight - config.heightBlendAmount, config.minHeight, adjustedHeight);
             }
         }
+        else if (adjustedHeight > config.maxHeight)
+        {
+            float distFromMax = adjustedHeight - config.maxHeight;
+            if (distFromMax < config.heightBlendAmount)
+            {
+                heightFitness = 1.0 - SmoothStep(config.maxHeight, config.maxHeight + config.heightBlendAmount, adjustedHeight);
+            }
+        }
+    }
+    
+    // === SLOPE FITNESS ===
+    float slopeFitness = 0.0;
+    
+    // Check if within slope range
+    if (adjustedSlope >= config.minSlope && adjustedSlope <= config.maxSlope)
+    {
+        // Apply blend at edges
+        if (adjustedSlope < config.minSlope + config.slopeBlendAmount)
+        {
+            slopeFitness = SmoothStep(config.minSlope, config.minSlope + config.slopeBlendAmount, adjustedSlope);
+        }
+        else if (adjustedSlope > config.maxSlope - config.slopeBlendAmount)
+        {
+            slopeFitness = 1.0 - SmoothStep(config.maxSlope - config.slopeBlendAmount, config.maxSlope, adjustedSlope);
+        }
+        else
+        {
+            slopeFitness = 1.0;
+        }
+    }
+    else
+    {
+        // Outside range - check blend zones
+        if (adjustedSlope < config.minSlope)
+        {
+            float distFromMin = config.minSlope - adjustedSlope;
+            if (distFromMin < config.slopeBlendAmount)
+            {
+                slopeFitness = SmoothStep(config.minSlope - config.slopeBlendAmount, config.minSlope, adjustedSlope);
+            }
+        }
+        else if (adjustedSlope > config.maxSlope)
+        {
+            float distFromMax = adjustedSlope - config.maxSlope;
+            if (distFromMax < config.slopeBlendAmount)
+            {
+                slopeFitness = 1.0 - SmoothStep(config.maxSlope, config.maxSlope + config.slopeBlendAmount, adjustedSlope);
+            }
+        }
+    }
     
     // Combine height and slope fitness (both must be satisfied)
-        fitness = heightFitness * slopeFitness;
+    fitness = heightFitness * slopeFitness;
     
     // Apply strength multiplier
-        fitness *= config.strength;
+    fitness *= config.strength;
     
-        return fitness;
-    }
+    return fitness;
+}
 
 // Determine best block type based on all configurations
-    int DetermineBlockType
-    (
-    float normalizedHeight, float slope, float noise)
+int DetermineBlockType(float normalizedHeight, float slope, float noise)
 {
-        int bestBlockType = 0; // Default to first block type
-        float bestScore = -1.0;
-        int bestPriority = -1;
+    int bestBlockType = 0; // Default to first block type
+    float bestScore = -1.0;
+    int bestPriority = -1;
     
     // Evaluate each block type configuration
-        for (int i = 0; i < numBlockTypes; i++)
-        {
-            BlockTypeConfig config = blockConfigs[i];
+    for (int i = 0; i < numBlockTypes; i++)
+    {
+        BlockTypeConfig config = blockConfigs[i];
         
-            float fitness = CalculateBlockFitness(config, normalizedHeight, slope, noise);
+        float fitness = CalculateBlockFitness(config, normalizedHeight, slope, noise);
         
         // Determine if this is the best choice so far
         // Priority ties: higher priority wins
         // Priority equal: higher fitness wins
-            bool isBetter = false;
+        bool isBetter = false;
         
-            if (config.priority > bestPriority)
-            {
-                isBetter = true;
-            }
-            else if (config.priority == bestPriority && fitness > bestScore)
-            {
-                isBetter = true;
-            }
-        
-            if (isBetter && fitness > 0.01) // Minimum threshold
-            {
-                bestBlockType = config.blockType;
-                bestScore = fitness;
-                bestPriority = config.priority;
-            }
+        if (config.priority > bestPriority)
+        {
+            isBetter = true;
         }
-    
-        return bestBlockType;
+        else if (config.priority == bestPriority && fitness > bestScore)
+        {
+            isBetter = true;
+        }
+        
+        if (isBetter && fitness > 0.01) // Minimum threshold
+        {
+            bestBlockType = config.blockType;
+            bestScore = fitness;
+            bestPriority = config.priority;
+        }
     }
+    
+    return bestBlockType;
+}
 
 [numthreads(8, 8, 1)]
-
-    void CSMain
-    (
-    uint3 id : SV_DispatchThreadID)
+void CSMain(uint3 id : SV_DispatchThreadID)
 {
-        if (id.x >= (uint) mapSize || id.y >= (uint) mapSize)
-            return;
+    if (id.x >= (uint) mapSize || id.y >= (uint) mapSize)
+        return;
     
-        int x = (int) id.x;
-        int z = (int) id.y;
+    int x = (int) id.x;
+    int z = (int) id.y;
     
     // Get normalized height (0-1)
-        int borderedIndex = (z + borderSize) * mapSizeWithBorder + (x + borderSize);
-        float normalizedHeight = heightMap[borderedIndex];
+    int borderedIndex = (z + borderSize) * mapSizeWithBorder + (x + borderSize);
+    float normalizedHeight = heightMap[borderedIndex];
     
     // Calculate slope
-        float slope = CalculateSlope(x, z);
+    float slope = CalculateSlope(x, z);
     
     // Get blend noise
-        float noise = GetBlendNoise(x, z);
+    float noise = GetBlendNoise(x, z);
     
     // Determine best block type using dynamic configuration
-        int blockType = DetermineBlockType(normalizedHeight, slope, noise);
+    int blockType = DetermineBlockType(normalizedHeight, slope, noise);
     
     // Store result
-        int outputIndex = z * mapSize + x;
-        blockData[outputIndex] = (uint) blockType;
-    }
+    int outputIndex = z * mapSize + x;
+    blockData[outputIndex] = (uint) blockType;
+}
