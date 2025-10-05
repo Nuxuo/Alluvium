@@ -40,6 +40,12 @@ public class SimpleHeightmapGeneratorEditor : Editor
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(5);
 
+        DrawLayerSettings();
+
+        EditorGUILayout.Space(5);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(5);
+
         DrawVisualizationSettings();
 
         EditorGUILayout.Space(5);
@@ -59,7 +65,7 @@ public class SimpleHeightmapGeneratorEditor : Editor
         style.fontStyle = FontStyle.Bold;
         style.alignment = TextAnchor.MiddleCenter;
         EditorGUILayout.LabelField("🗻 Simple Heightmap Generator", style);
-        EditorGUILayout.LabelField("Voxel-based terrain visualization", EditorStyles.centeredGreyMiniLabel);
+        EditorGUILayout.LabelField("Voxel-based terrain with layers (1x1x0.1)", EditorStyles.centeredGreyMiniLabel);
         EditorGUILayout.EndVertical();
     }
 
@@ -146,16 +152,86 @@ public class SimpleHeightmapGeneratorEditor : Editor
         EditorGUILayout.EndVertical();
     }
 
+    private void DrawLayerSettings()
+    {
+        EditorGUILayout.BeginVertical("box");
+        EditorGUILayout.LabelField("🪨 Layer Settings", EditorStyles.boldLabel);
+
+        EditorGUILayout.HelpBox(
+            "Each voxel is 1x1x0.1 units (width x depth x height)\n" +
+            "Layers are stacked from bottom to top:\n" +
+            "• Rock (base terrain from heightmap)\n" +
+            "• Dirt (middle layer)\n" +
+            "• Sand (top layer)",
+            MessageType.Info);
+
+        EditorGUILayout.Space(3);
+
+        // Dirt layer count
+        SerializedProperty dirtLayers = serializedObject.FindProperty("dirtLayers");
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.PropertyField(dirtLayers, new GUIContent("Dirt Layers", "Number of 0.1 unit layers"));
+
+        // Show world height
+        float dirtHeight = dirtLayers.intValue * 0.1f;
+        GUI.enabled = false;
+        EditorGUILayout.LabelField($"= {dirtHeight:F1}u", GUILayout.Width(60));
+        GUI.enabled = true;
+        EditorGUILayout.EndHorizontal();
+
+        // Sand layer count
+        SerializedProperty sandLayers = serializedObject.FindProperty("sandLayers");
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.PropertyField(sandLayers, new GUIContent("Sand Layers", "Number of 0.1 unit layers"));
+
+        // Show world height
+        float sandHeight = sandLayers.intValue * 0.1f;
+        GUI.enabled = false;
+        EditorGUILayout.LabelField($"= {sandHeight:F1}u", GUILayout.Width(60));
+        GUI.enabled = true;
+        EditorGUILayout.EndHorizontal();
+
+        EditorGUILayout.Space(5);
+
+        // Total additional height info
+        float totalAdditionalHeight = dirtHeight + sandHeight;
+        int totalAdditionalLayers = dirtLayers.intValue + sandLayers.intValue;
+        EditorGUILayout.HelpBox(
+            $"Additional layers: {totalAdditionalLayers} (adds {totalAdditionalHeight:F1} units on top of base terrain)",
+            MessageType.None);
+
+        // Color legend
+        EditorGUILayout.Space(3);
+        EditorGUILayout.LabelField("Layer Colors:", EditorStyles.miniLabel);
+
+        EditorGUILayout.BeginHorizontal();
+        DrawColorBox(new Color(0.4f, 0.4f, 0.45f), "Rock");
+        DrawColorBox(new Color(0.4f, 0.25f, 0.15f), "Dirt");
+        DrawColorBox(new Color(0.9f, 0.85f, 0.6f), "Sand");
+        EditorGUILayout.EndHorizontal();
+
+        EditorGUILayout.EndVertical();
+    }
+
+    private void DrawColorBox(Color color, string label)
+    {
+        EditorGUILayout.BeginVertical();
+
+        Rect rect = GUILayoutUtility.GetRect(40, 20);
+        EditorGUI.DrawRect(rect, color);
+
+        EditorGUILayout.LabelField(label, EditorStyles.centeredGreyMiniLabel);
+
+        EditorGUILayout.EndVertical();
+    }
+
     private void DrawVisualizationSettings()
     {
         EditorGUILayout.BeginVertical("box");
         EditorGUILayout.LabelField("📦 Voxel Settings", EditorStyles.boldLabel);
 
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("voxelSize"),
-            new GUIContent("Voxel Size", "Size of each voxel (1 = map size matches terrain scale)"));
-
         EditorGUILayout.PropertyField(serializedObject.FindProperty("heightScale"),
-            new GUIContent("Height Scale", "Maximum terrain height"));
+            new GUIContent("Height Scale", "Maximum terrain height (for base rock layer)"));
 
         EditorGUILayout.PropertyField(serializedObject.FindProperty("terrainScale"),
             new GUIContent("Terrain Scale", "Width/depth of terrain in world units"));
@@ -165,9 +241,10 @@ public class SimpleHeightmapGeneratorEditor : Editor
 
         EditorGUILayout.Space(5);
         EditorGUILayout.HelpBox(
-            "Each voxel is a 3D box from ground to heightmap value\n" +
-            "Voxels are colored: Blue (low) → Red (high)\n" +
-            "Only visible faces are rendered for performance",
+            "Voxels are 1x1x0.1 units (width x depth x height)\n" +
+            "Each column contains multiple 0.1-unit layers\n" +
+            "Layers are colored by soil type\n" +
+            "Edge walls show visible strata",
             MessageType.Info);
 
         EditorGUILayout.EndVertical();

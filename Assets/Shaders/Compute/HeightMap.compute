@@ -11,46 +11,34 @@ float scaleFactor;
 int floatToIntMultiplier;
 uint heightMapSize;
 int seed;
-
 [numthreads(64, 1, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= heightMapSize)
         return;
-    
     int x = id.x % mapSize;
     int y = id.x / mapSize;
-    
     float height = 0;
     float scale = scaleFactor;
     float weight = 1;
-    float maxAmplitude = 0; // Track maximum possible amplitude
-    
     fnl_state state = fnlCreateState(seed);
     state.noise_type = FNL_NOISE_OPENSIMPLEX2;
     state.frequency = 1.0;
-    
     for (int i = 0; i < octaves; i++)
     {
         float2 coord = float2(x, y) / mapSize * scale + offsets[i];
-        
+
         float noise = fnlGetNoise2D(state, coord.x, coord.y);
-        
+
         // Remap from [-1, 1] to [0, 1]
         noise = (noise + 1) * 0.5;
-        
         height += noise * weight;
-        maxAmplitude += weight; // Accumulate the weights
-        
         scale *= lacunarity;
         weight *= persistence;
     }
-    
-    // Normalize height to [0, 1] range
-    height = height / maxAmplitude;
-    
+
     heightMap[id.x] = height;
-    
+
     int val = int(height * floatToIntMultiplier);
     InterlockedMin(minMax[0], val);
     InterlockedMax(minMax[1], val);
