@@ -1,0 +1,21 @@
+#pragma kernel CSMain
+
+#include "FastNoiseLite.hlsl"
+
+RWStructuredBuffer<float> heightMap;
+RWStructuredBuffer<float> sedimentMap;
+
+int width;
+int height;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint) width || id.y >= (uint) height)
+        return;
+    
+    int index = id.x * height + id.y;
+    
+    // Placeholder for GPU erosion implementation
+    // This would implement the water particle simulation on GPU
+}

@@ -1,0 +1,19 @@
+#pragma kernel CSMain
+
+RWStructuredBuffer<float> heightMap;
+int width;
+int height;
+float talusAngle;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint) width || id.y >= (uint) height)
+        return;
+    
+    int index = id.x * height + id.y;
+    float currentHeight = heightMap[index];
+    
+    // Apply thermal erosion based on talus angle
+    // Check 8 neighbors and redistribute material
+}
