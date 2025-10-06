@@ -4,6 +4,10 @@
         _RockColour ("Rock Colour", Color) = (1,1,1,1)
         _GrassSlopeThreshold ("Grass Slope Threshold", Range(0,1)) = .5
         _GrassBlendAmount ("Grass Blend Amount", Range(0,1)) = .5
+        
+        _CraterColour ("Crater Colour", Color) = (0.2,0.15,0.1,1)
+        _CraterMask ("Crater Mask", 2D) = "black" {}
+        _TerrainScale ("Terrain Scale", Float) = 20
     }
     SubShader
     {
@@ -22,12 +26,23 @@
         half _GrassBlendAmount;
         fixed4 _GrassColour;
         fixed4 _RockColour;
+        fixed4 _CraterColour;
+        sampler2D _CraterMask;
+        float _TerrainScale;
 
         void surf (Input IN, inout SurfaceOutputStandard o) {
-            float slope = 1-IN.worldNormal.y; // slope = 0 when terrain is completely flat
-            float grassBlendHeight = _GrassSlopeThreshold * (1-_GrassBlendAmount);
-            float grassWeight = 1-saturate((slope-grassBlendHeight)/(_GrassSlopeThreshold-grassBlendHeight));
-            o.Albedo = _GrassColour * grassWeight + _RockColour * (1-grassWeight);
+            // Calculate slope-based color
+            float slope = 1 - IN.worldNormal.y;
+            float grassBlendHeight = _GrassSlopeThreshold * (1 - _GrassBlendAmount);
+            float grassWeight = 1 - saturate((slope - grassBlendHeight) / (_GrassSlopeThreshold - grassBlendHeight));
+            fixed4 terrainColor = _GrassColour * grassWeight + _RockColour * (1 - grassWeight);
+            
+            // Sample crater mask
+            float2 uv = (IN.worldPos.xz / _TerrainScale + 1.0) * 0.5;
+            float craterMask = tex2D(_CraterMask, uv).r;
+            
+            // Blend crater color
+            o.Albedo = lerp(terrainColor.rgb, _CraterColour.rgb, craterMask);
         }
         ENDCG
     }

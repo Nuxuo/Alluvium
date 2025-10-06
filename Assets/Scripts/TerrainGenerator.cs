@@ -3,7 +3,6 @@ using UnityEngine;
 
 public class TerrainGenerator : MonoBehaviour
 {
-
     public bool printTimers;
 
     [Header("Mesh Settings")]
@@ -14,7 +13,7 @@ public class TerrainGenerator : MonoBehaviour
 
     [Header("Side Settings")]
     public bool generateSides = true;
-    public float sideDepth = 0f; // Y position for bottom of sides (0 = ground level)
+    public float sideDepth = 0f;
     public bool generateBottom = false;
 
     [Header("Erosion Settings")]
@@ -132,6 +131,13 @@ public class TerrainGenerator : MonoBehaviour
 
     public void ContructMesh()
     {
+        // Clear crater mask when generating new mesh
+        ExplosionManager explosionMgr = GetComponent<ExplosionManager>();
+        if (explosionMgr != null)
+        {
+            explosionMgr.ResetCraterMask();
+        }
+
         List<Vector3> verts = new List<Vector3>();
         List<int> triangles = new List<int>();
 
@@ -171,26 +177,22 @@ public class TerrainGenerator : MonoBehaviour
         {
             int topVertCount = verts.Count;
 
-            // Add bottom edge vertices (directly below top edge vertices)
-            // Front edge (y = 0)
+            // Add bottom edge vertices
             for (int x = 0; x < mapSize; x++)
             {
                 Vector3 topVert = verts[x];
                 verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
             }
-            // Back edge (y = mapSize - 1)
             for (int x = 0; x < mapSize; x++)
             {
                 Vector3 topVert = verts[(mapSize - 1) * mapSize + x];
                 verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
             }
-            // Left edge (x = 0, excluding corners already added)
             for (int y = 1; y < mapSize - 1; y++)
             {
                 Vector3 topVert = verts[y * mapSize];
                 verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
             }
-            // Right edge (x = mapSize - 1, excluding corners already added)
             for (int y = 1; y < mapSize - 1; y++)
             {
                 Vector3 topVert = verts[y * mapSize + mapSize - 1];
@@ -199,7 +201,7 @@ public class TerrainGenerator : MonoBehaviour
 
             int bottomStart = topVertCount;
 
-            // Front side (y = 0)
+            // Front side
             for (int x = 0; x < mapSize - 1; x++)
             {
                 int topLeft = x;
@@ -216,7 +218,7 @@ public class TerrainGenerator : MonoBehaviour
                 triangles.Add(bottomLeft);
             }
 
-            // Back side (y = mapSize - 1)
+            // Back side
             int backOffset = bottomStart + mapSize;
             for (int x = 0; x < mapSize - 1; x++)
             {
@@ -234,7 +236,7 @@ public class TerrainGenerator : MonoBehaviour
                 triangles.Add(topRight);
             }
 
-            // Left side (x = 0)
+            // Left side
             int leftOffset = bottomStart + mapSize * 2;
             for (int y = 0; y < mapSize - 1; y++)
             {
@@ -252,7 +254,7 @@ public class TerrainGenerator : MonoBehaviour
                 triangles.Add(topNext);
             }
 
-            // Right side (x = mapSize - 1)
+            // Right side
             int rightOffset = bottomStart + mapSize * 2 + mapSize - 2;
             for (int y = 0; y < mapSize - 1; y++)
             {
@@ -310,7 +312,6 @@ public class TerrainGenerator : MonoBehaviour
 
     void AssignMeshComponents()
     {
-        // Find/creator mesh holder object in children
         string meshHolderName = "Mesh Holder";
         Transform meshHolder = transform.Find(meshHolderName);
         if (meshHolder == null)
@@ -321,7 +322,6 @@ public class TerrainGenerator : MonoBehaviour
             meshHolder.transform.localRotation = Quaternion.identity;
         }
 
-        // Ensure mesh renderer and filter components are assigned
         if (!meshHolder.gameObject.GetComponent<MeshFilter>())
         {
             meshHolder.gameObject.AddComponent<MeshFilter>();
@@ -333,5 +333,15 @@ public class TerrainGenerator : MonoBehaviour
 
         meshRenderer = meshHolder.GetComponent<MeshRenderer>();
         meshFilter = meshHolder.GetComponent<MeshFilter>();
+    }
+
+    // Public accessor for explosion system
+    public MeshFilter GetMeshFilter()
+    {
+        if (meshFilter == null)
+        {
+            AssignMeshComponents();
+        }
+        return meshFilter;
     }
 }
