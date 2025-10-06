@@ -1,17 +1,23 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
-public class TerrainGenerator : MonoBehaviour {
+public class TerrainGenerator : MonoBehaviour
+{
 
     public bool printTimers;
 
-    [Header ("Mesh Settings")]
+    [Header("Mesh Settings")]
     public int mapSize = 255;
     public float scale = 20;
     public float elevationScale = 10;
     public Material material;
 
-    [Header ("Erosion Settings")]
+    [Header("Side Settings")]
+    public bool generateSides = true;
+    public float sideDepth = 0f; // Y position for bottom of sides (0 = ground level)
+    public bool generateBottom = false;
+
+    [Header("Erosion Settings")]
     public ComputeShader erosion;
     public int numErosionIterations = 50000;
     public int erosionBrushRadius = 3;
@@ -26,7 +32,7 @@ public class TerrainGenerator : MonoBehaviour {
     public float gravity = 4;
     public float startSpeed = 1;
     public float startWater = 1;
-    [Range (0, 1)]
+    [Range(0, 1)]
     public float inertia = 0.3f;
 
     // Internal
@@ -37,156 +43,295 @@ public class TerrainGenerator : MonoBehaviour {
     MeshRenderer meshRenderer;
     MeshFilter meshFilter;
 
-    public void GenerateHeightMap () {
+    public void GenerateHeightMap()
+    {
         mapSizeWithBorder = mapSize + erosionBrushRadius * 2;
-        map = FindObjectOfType<HeightMapGenerator> ().GenerateHeightMap (mapSizeWithBorder);
+        map = FindObjectOfType<HeightMapGenerator>().GenerateHeightMap(mapSizeWithBorder);
     }
 
-    public void Erode () {
+    public void Erode()
+    {
         int numThreads = numErosionIterations / 1024;
 
         // Create brush
-        List<int> brushIndexOffsets = new List<int> ();
-        List<float> brushWeights = new List<float> ();
+        List<int> brushIndexOffsets = new List<int>();
+        List<float> brushWeights = new List<float>();
 
         float weightSum = 0;
-        for (int brushY = -erosionBrushRadius; brushY <= erosionBrushRadius; brushY++) {
-            for (int brushX = -erosionBrushRadius; brushX <= erosionBrushRadius; brushX++) {
+        for (int brushY = -erosionBrushRadius; brushY <= erosionBrushRadius; brushY++)
+        {
+            for (int brushX = -erosionBrushRadius; brushX <= erosionBrushRadius; brushX++)
+            {
                 float sqrDst = brushX * brushX + brushY * brushY;
-                if (sqrDst < erosionBrushRadius * erosionBrushRadius) {
-                    brushIndexOffsets.Add (brushY * mapSize + brushX);
-                    float brushWeight = 1 - Mathf.Sqrt (sqrDst) / erosionBrushRadius;
+                if (sqrDst < erosionBrushRadius * erosionBrushRadius)
+                {
+                    brushIndexOffsets.Add(brushY * mapSize + brushX);
+                    float brushWeight = 1 - Mathf.Sqrt(sqrDst) / erosionBrushRadius;
                     weightSum += brushWeight;
-                    brushWeights.Add (brushWeight);
+                    brushWeights.Add(brushWeight);
                 }
             }
         }
-        for (int i = 0; i < brushWeights.Count; i++) {
+        for (int i = 0; i < brushWeights.Count; i++)
+        {
             brushWeights[i] /= weightSum;
         }
 
         // Send brush data to compute shader
-        ComputeBuffer brushIndexBuffer = new ComputeBuffer (brushIndexOffsets.Count, sizeof (int));
-        ComputeBuffer brushWeightBuffer = new ComputeBuffer (brushWeights.Count, sizeof (int));
-        brushIndexBuffer.SetData (brushIndexOffsets);
-        brushWeightBuffer.SetData (brushWeights);
-        erosion.SetBuffer (0, "brushIndices", brushIndexBuffer);
-        erosion.SetBuffer (0, "brushWeights", brushWeightBuffer);
+        ComputeBuffer brushIndexBuffer = new ComputeBuffer(brushIndexOffsets.Count, sizeof(int));
+        ComputeBuffer brushWeightBuffer = new ComputeBuffer(brushWeights.Count, sizeof(int));
+        brushIndexBuffer.SetData(brushIndexOffsets);
+        brushWeightBuffer.SetData(brushWeights);
+        erosion.SetBuffer(0, "brushIndices", brushIndexBuffer);
+        erosion.SetBuffer(0, "brushWeights", brushWeightBuffer);
 
         // Generate random indices for droplet placement
         int[] randomIndices = new int[numErosionIterations];
-        for (int i = 0; i < numErosionIterations; i++) {
-            int randomX = Random.Range (erosionBrushRadius, mapSize + erosionBrushRadius);
-            int randomY = Random.Range (erosionBrushRadius, mapSize + erosionBrushRadius);
+        for (int i = 0; i < numErosionIterations; i++)
+        {
+            int randomX = Random.Range(erosionBrushRadius, mapSize + erosionBrushRadius);
+            int randomY = Random.Range(erosionBrushRadius, mapSize + erosionBrushRadius);
             randomIndices[i] = randomY * mapSize + randomX;
         }
 
         // Send random indices to compute shader
-        ComputeBuffer randomIndexBuffer = new ComputeBuffer (randomIndices.Length, sizeof (int));
-        randomIndexBuffer.SetData (randomIndices);
-        erosion.SetBuffer (0, "randomIndices", randomIndexBuffer);
+        ComputeBuffer randomIndexBuffer = new ComputeBuffer(randomIndices.Length, sizeof(int));
+        randomIndexBuffer.SetData(randomIndices);
+        erosion.SetBuffer(0, "randomIndices", randomIndexBuffer);
 
         // Heightmap buffer
-        ComputeBuffer mapBuffer = new ComputeBuffer (map.Length, sizeof (float));
-        mapBuffer.SetData (map);
-        erosion.SetBuffer (0, "map", mapBuffer);
+        ComputeBuffer mapBuffer = new ComputeBuffer(map.Length, sizeof(float));
+        mapBuffer.SetData(map);
+        erosion.SetBuffer(0, "map", mapBuffer);
 
         // Settings
-        erosion.SetInt ("borderSize", erosionBrushRadius);
-        erosion.SetInt ("mapSize", mapSizeWithBorder);
-        erosion.SetInt ("brushLength", brushIndexOffsets.Count);
-        erosion.SetInt ("maxLifetime", maxLifetime);
-        erosion.SetFloat ("inertia", inertia);
-        erosion.SetFloat ("sedimentCapacityFactor", sedimentCapacityFactor);
-        erosion.SetFloat ("minSedimentCapacity", minSedimentCapacity);
-        erosion.SetFloat ("depositSpeed", depositSpeed);
-        erosion.SetFloat ("erodeSpeed", erodeSpeed);
-        erosion.SetFloat ("evaporateSpeed", evaporateSpeed);
-        erosion.SetFloat ("gravity", gravity);
-        erosion.SetFloat ("startSpeed", startSpeed);
-        erosion.SetFloat ("startWater", startWater);
+        erosion.SetInt("borderSize", erosionBrushRadius);
+        erosion.SetInt("mapSize", mapSizeWithBorder);
+        erosion.SetInt("brushLength", brushIndexOffsets.Count);
+        erosion.SetInt("maxLifetime", maxLifetime);
+        erosion.SetFloat("inertia", inertia);
+        erosion.SetFloat("sedimentCapacityFactor", sedimentCapacityFactor);
+        erosion.SetFloat("minSedimentCapacity", minSedimentCapacity);
+        erosion.SetFloat("depositSpeed", depositSpeed);
+        erosion.SetFloat("erodeSpeed", erodeSpeed);
+        erosion.SetFloat("evaporateSpeed", evaporateSpeed);
+        erosion.SetFloat("gravity", gravity);
+        erosion.SetFloat("startSpeed", startSpeed);
+        erosion.SetFloat("startWater", startWater);
 
         // Run compute shader
-        erosion.Dispatch (0, numThreads, 1, 1);
-        mapBuffer.GetData (map);
+        erosion.Dispatch(0, numThreads, 1, 1);
+        mapBuffer.GetData(map);
 
         // Release buffers
-        mapBuffer.Release ();
-        randomIndexBuffer.Release ();
-        brushIndexBuffer.Release ();
-        brushWeightBuffer.Release ();
+        mapBuffer.Release();
+        randomIndexBuffer.Release();
+        brushIndexBuffer.Release();
+        brushWeightBuffer.Release();
     }
 
-    public void ContructMesh () {
-        Vector3[] verts = new Vector3[mapSize * mapSize];
-        int[] triangles = new int[(mapSize - 1) * (mapSize - 1) * 6];
-        int t = 0;
+    public void ContructMesh()
+    {
+        List<Vector3> verts = new List<Vector3>();
+        List<int> triangles = new List<int>();
 
-        for (int i = 0; i < mapSize * mapSize; i++) {
+        // Generate top surface vertices
+        for (int i = 0; i < mapSize * mapSize; i++)
+        {
             int x = i % mapSize;
             int y = i / mapSize;
             int borderedMapIndex = (y + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
-            int meshMapIndex = y * mapSize + x;
 
-            Vector2 percent = new Vector2 (x / (mapSize - 1f), y / (mapSize - 1f));
-            Vector3 pos = new Vector3 (percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+            Vector2 percent = new Vector2(x / (mapSize - 1f), y / (mapSize - 1f));
+            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
 
             float normalizedHeight = map[borderedMapIndex];
             pos += Vector3.up * normalizedHeight * elevationScale;
-            verts[meshMapIndex] = pos;
+            verts.Add(pos);
+        }
 
-            // Construct triangles
-            if (x != mapSize - 1 && y != mapSize - 1) {
-                t = (y * (mapSize - 1) + x) * 3 * 2;
+        // Generate top surface triangles
+        for (int y = 0; y < mapSize - 1; y++)
+        {
+            for (int x = 0; x < mapSize - 1; x++)
+            {
+                int i = y * mapSize + x;
 
-                triangles[t + 0] = meshMapIndex + mapSize;
-                triangles[t + 1] = meshMapIndex + mapSize + 1;
-                triangles[t + 2] = meshMapIndex;
+                triangles.Add(i + mapSize);
+                triangles.Add(i + mapSize + 1);
+                triangles.Add(i);
 
-                triangles[t + 3] = meshMapIndex + mapSize + 1;
-                triangles[t + 4] = meshMapIndex + 1;
-                triangles[t + 5] = meshMapIndex;
-                t += 6;
+                triangles.Add(i + mapSize + 1);
+                triangles.Add(i + 1);
+                triangles.Add(i);
             }
         }
 
-        if (mesh == null) {
-            mesh = new Mesh ();
-        } else {
-            mesh.Clear ();
+        if (generateSides)
+        {
+            int topVertCount = verts.Count;
+
+            // Add bottom edge vertices (directly below top edge vertices)
+            // Front edge (y = 0)
+            for (int x = 0; x < mapSize; x++)
+            {
+                Vector3 topVert = verts[x];
+                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
+            }
+            // Back edge (y = mapSize - 1)
+            for (int x = 0; x < mapSize; x++)
+            {
+                Vector3 topVert = verts[(mapSize - 1) * mapSize + x];
+                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
+            }
+            // Left edge (x = 0, excluding corners already added)
+            for (int y = 1; y < mapSize - 1; y++)
+            {
+                Vector3 topVert = verts[y * mapSize];
+                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
+            }
+            // Right edge (x = mapSize - 1, excluding corners already added)
+            for (int y = 1; y < mapSize - 1; y++)
+            {
+                Vector3 topVert = verts[y * mapSize + mapSize - 1];
+                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
+            }
+
+            int bottomStart = topVertCount;
+
+            // Front side (y = 0)
+            for (int x = 0; x < mapSize - 1; x++)
+            {
+                int topLeft = x;
+                int topRight = x + 1;
+                int bottomLeft = bottomStart + x;
+                int bottomRight = bottomStart + x + 1;
+
+                triangles.Add(topLeft);
+                triangles.Add(topRight);
+                triangles.Add(bottomLeft);
+
+                triangles.Add(topRight);
+                triangles.Add(bottomRight);
+                triangles.Add(bottomLeft);
+            }
+
+            // Back side (y = mapSize - 1)
+            int backOffset = bottomStart + mapSize;
+            for (int x = 0; x < mapSize - 1; x++)
+            {
+                int topLeft = (mapSize - 1) * mapSize + x;
+                int topRight = (mapSize - 1) * mapSize + x + 1;
+                int bottomLeft = backOffset + x;
+                int bottomRight = backOffset + x + 1;
+
+                triangles.Add(bottomLeft);
+                triangles.Add(topRight);
+                triangles.Add(topLeft);
+
+                triangles.Add(bottomLeft);
+                triangles.Add(bottomRight);
+                triangles.Add(topRight);
+            }
+
+            // Left side (x = 0)
+            int leftOffset = bottomStart + mapSize * 2;
+            for (int y = 0; y < mapSize - 1; y++)
+            {
+                int topCurrent = y * mapSize;
+                int topNext = (y + 1) * mapSize;
+                int bottomCurrent = (y == 0) ? bottomStart : leftOffset + y - 1;
+                int bottomNext = (y == mapSize - 2) ? backOffset : leftOffset + y;
+
+                triangles.Add(bottomCurrent);
+                triangles.Add(topNext);
+                triangles.Add(topCurrent);
+
+                triangles.Add(bottomCurrent);
+                triangles.Add(bottomNext);
+                triangles.Add(topNext);
+            }
+
+            // Right side (x = mapSize - 1)
+            int rightOffset = bottomStart + mapSize * 2 + mapSize - 2;
+            for (int y = 0; y < mapSize - 1; y++)
+            {
+                int topCurrent = y * mapSize + mapSize - 1;
+                int topNext = (y + 1) * mapSize + mapSize - 1;
+                int bottomCurrent = (y == 0) ? bottomStart + mapSize - 1 : rightOffset + y - 1;
+                int bottomNext = (y == mapSize - 2) ? backOffset + mapSize - 1 : rightOffset + y;
+
+                triangles.Add(topCurrent);
+                triangles.Add(topNext);
+                triangles.Add(bottomCurrent);
+
+                triangles.Add(topNext);
+                triangles.Add(bottomNext);
+                triangles.Add(bottomCurrent);
+            }
+
+            // Optional bottom face
+            if (generateBottom)
+            {
+                int b0 = bottomStart;
+                int b1 = bottomStart + mapSize - 1;
+                int b2 = backOffset;
+                int b3 = backOffset + mapSize - 1;
+
+                triangles.Add(b0);
+                triangles.Add(b2);
+                triangles.Add(b1);
+
+                triangles.Add(b1);
+                triangles.Add(b2);
+                triangles.Add(b3);
+            }
+        }
+
+        if (mesh == null)
+        {
+            mesh = new Mesh();
+        }
+        else
+        {
+            mesh.Clear();
         }
         mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-        mesh.vertices = verts;
-        mesh.triangles = triangles;
-        mesh.RecalculateNormals ();
+        mesh.vertices = verts.ToArray();
+        mesh.triangles = triangles.ToArray();
+        mesh.RecalculateNormals();
 
-        AssignMeshComponents ();
+        AssignMeshComponents();
         meshFilter.sharedMesh = mesh;
         meshRenderer.sharedMaterial = material;
 
-        material.SetFloat ("_MaxHeight", elevationScale);
+        material.SetFloat("_MaxHeight", elevationScale);
     }
 
-    void AssignMeshComponents () {
+    void AssignMeshComponents()
+    {
         // Find/creator mesh holder object in children
         string meshHolderName = "Mesh Holder";
-        Transform meshHolder = transform.Find (meshHolderName);
-        if (meshHolder == null) {
-            meshHolder = new GameObject (meshHolderName).transform;
+        Transform meshHolder = transform.Find(meshHolderName);
+        if (meshHolder == null)
+        {
+            meshHolder = new GameObject(meshHolderName).transform;
             meshHolder.transform.parent = transform;
             meshHolder.transform.localPosition = Vector3.zero;
             meshHolder.transform.localRotation = Quaternion.identity;
         }
 
         // Ensure mesh renderer and filter components are assigned
-        if (!meshHolder.gameObject.GetComponent<MeshFilter> ()) {
-            meshHolder.gameObject.AddComponent<MeshFilter> ();
+        if (!meshHolder.gameObject.GetComponent<MeshFilter>())
+        {
+            meshHolder.gameObject.AddComponent<MeshFilter>();
         }
-        if (!meshHolder.GetComponent<MeshRenderer> ()) {
-            meshHolder.gameObject.AddComponent<MeshRenderer> ();
+        if (!meshHolder.GetComponent<MeshRenderer>())
+        {
+            meshHolder.gameObject.AddComponent<MeshRenderer>();
         }
 
-        meshRenderer = meshHolder.GetComponent<MeshRenderer> ();
-        meshFilter = meshHolder.GetComponent<MeshFilter> ();
+        meshRenderer = meshHolder.GetComponent<MeshRenderer>();
+        meshFilter = meshHolder.GetComponent<MeshFilter>();
     }
 }
