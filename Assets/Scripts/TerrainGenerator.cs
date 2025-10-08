@@ -44,21 +44,46 @@ public class TerrainGenerator : MonoBehaviour
     MeshRenderer meshRenderer;
     MeshFilter meshFilter;
     NavMeshSurface navMeshSurface;
-    MeshCollider meshCollider; // Add this line
+    MeshCollider meshCollider;
 
-    // Pathfinding
-    private LineRenderer pathLineRenderer;
-    private Vector3 pathStartPoint;
-    private Vector3 pathEndPoint;
-    private bool hasPathPoints = false;
-
-    void Start()
+    public void GenerateTerrain()
     {
-        if (Application.isPlaying)
+        // Try to find the Pathfinder component and clear any existing paths
+        if (TryGetComponent(out Pathfinder pathfinder))
         {
-            GenerateHeightMap();
-            ContructMesh();
-            BakeNavMesh();
+            pathfinder.ClearPath();
+        }
+
+        var sw = new System.Diagnostics.Stopwatch();
+        if (printTimers) sw.Start();
+
+        GenerateHeightMap();
+        if (printTimers)
+        {
+            Debug.Log($"{mapSize}x{mapSize} heightmap generated in {sw.ElapsedMilliseconds}ms");
+            sw.Restart();
+        }
+
+        Erode();
+        if (printTimers)
+        {
+            string numIterationsString = numErosionIterations >= 1000 ? (numErosionIterations / 1000) + "k" : numErosionIterations.ToString();
+            Debug.Log($"{numIterationsString} erosion iterations completed in {sw.ElapsedMilliseconds}ms");
+            sw.Restart();
+        }
+
+        ContructMesh();
+        if (printTimers)
+        {
+            Debug.Log($"Mesh constructed in {sw.ElapsedMilliseconds}ms");
+            sw.Restart();
+        }
+
+        BakeNavMesh();
+        if (printTimers)
+        {
+            Debug.Log($"NavMesh baked in {sw.ElapsedMilliseconds}ms");
+            sw.Stop();
         }
     }
 
@@ -151,13 +176,6 @@ public class TerrainGenerator : MonoBehaviour
 
     public void ContructMesh()
     {
-        // Clear crater mask when generating new mesh
-        ExplosionManager explosionMgr = GetComponent<ExplosionManager>();
-        if (explosionMgr != null)
-        {
-            explosionMgr.ResetCraterMask();
-        }
-
         List<Vector3> verts = new List<Vector3>();
         List<int> triangles = new List<int>();
 
@@ -325,7 +343,7 @@ public class TerrainGenerator : MonoBehaviour
 
         AssignMeshComponents();
         meshFilter.sharedMesh = mesh;
-        meshCollider.sharedMesh = mesh; // Assign mesh to the collider
+        meshCollider.sharedMesh = mesh;
         meshRenderer.sharedMaterial = material;
 
         material.SetFloat("_MaxHeight", elevationScale);
@@ -355,29 +373,15 @@ public class TerrainGenerator : MonoBehaviour
         {
             meshHolder.gameObject.AddComponent<NavMeshSurface>();
         }
-        // Add or get MeshCollider
         if (!meshHolder.GetComponent<MeshCollider>())
         {
             meshHolder.gameObject.AddComponent<MeshCollider>();
         }
 
-        pathLineRenderer = meshHolder.GetComponent<LineRenderer>();
-        if (pathLineRenderer == null)
-        {
-            pathLineRenderer = meshHolder.gameObject.AddComponent<LineRenderer>();
-            pathLineRenderer.startWidth = 0.5f;
-            pathLineRenderer.endWidth = 0.5f;
-            pathLineRenderer.material = new Material(Shader.Find("Legacy Shaders/Particles/Alpha Blended Premultiply"));
-            pathLineRenderer.startColor = Color.green;
-            pathLineRenderer.endColor = Color.green;
-            pathLineRenderer.positionCount = 0;
-        }
-
-
         meshRenderer = meshHolder.GetComponent<MeshRenderer>();
         meshFilter = meshHolder.GetComponent<MeshFilter>();
         navMeshSurface = meshHolder.GetComponent<NavMeshSurface>();
-        meshCollider = meshHolder.GetComponent<MeshCollider>(); // Get the collider
+        meshCollider = meshHolder.GetComponent<MeshCollider>();
     }
 
     public MeshFilter GetMeshFilter()
@@ -394,121 +398,11 @@ public class TerrainGenerator : MonoBehaviour
         if (navMeshSurface != null)
         {
             navMeshSurface.BuildNavMesh();
-            Debug.Log("NavMesh baked successfully at runtime!");
+            Debug.Log("NavMesh baked successfully!");
         }
         else
         {
             Debug.LogWarning("NavMeshSurface component not found on Mesh Holder object. Please add one.");
-        }
-    }
-
-    public void TestPathfinding()
-    {
-        Vector3 startPos, endPos;
-        if (!GetRandomPointOnNavMesh(out startPos) || !GetRandomPointOnNavMesh(out endPos))
-        {
-            return;
-        }
-
-        pathStartPoint = startPos;
-        pathEndPoint = endPos;
-        hasPathPoints = true;
-
-        NavMeshPath path = new NavMeshPath();
-        if (NavMesh.CalculatePath(startPos, endPos, NavMesh.AllAreas, path))
-        {
-            if (path.status == NavMeshPathStatus.PathComplete)
-            {
-                Debug.Log("Path found!");
-                UpdatePathVisuals(path); // Use the new method
-            }
-            else
-            {
-                Debug.LogWarning($"Path found but is incomplete. Status: {path.status}");
-                pathLineRenderer.positionCount = 0;
-            }
-        }
-        else
-        {
-            Debug.LogError("Failed to calculate path.");
-            pathLineRenderer.positionCount = 0;
-        }
-    }
-
-    // NEW METHOD to drape the line over the terrain
-    void UpdatePathVisuals(NavMeshPath path)
-    {
-        if (path.corners.Length < 2)
-        {
-            pathLineRenderer.positionCount = 0;
-            return;
-        }
-
-        List<Vector3> drapedPathPoints = new List<Vector3>();
-        float subdivisionDensity = 1.0f; // Add a point every 1 unit
-
-        for (int i = 0; i < path.corners.Length - 1; i++)
-        {
-            Vector3 startCorner = path.corners[i];
-            Vector3 endCorner = path.corners[i + 1];
-            drapedPathPoints.Add(startCorner); // Always add the corner itself
-
-            float distance = Vector3.Distance(startCorner, endCorner);
-            int subdivisions = Mathf.FloorToInt(distance * subdivisionDensity);
-
-            for (int j = 1; j < subdivisions; j++)
-            {
-                float t = (float)j / subdivisions;
-                Vector3 pointOnLine = Vector3.Lerp(startCorner, endCorner, t);
-
-                // Raycast down to find the terrain surface
-                RaycastHit hit;
-                if (Physics.Raycast(pointOnLine + Vector3.up * 20, Vector3.down, out hit, 40.0f))
-                {
-                    drapedPathPoints.Add(hit.point + Vector3.up * 0.1f); // Add a small offset to prevent z-fighting
-                }
-            }
-        }
-        drapedPathPoints.Add(path.corners[path.corners.Length - 1]); // Add the final corner
-
-        pathLineRenderer.positionCount = drapedPathPoints.Count;
-        pathLineRenderer.SetPositions(drapedPathPoints.ToArray());
-    }
-
-    private bool GetRandomPointOnNavMesh(out Vector3 point)
-    {
-        point = Vector3.zero;
-        if (meshFilter == null || meshFilter.sharedMesh == null)
-        {
-            Debug.LogError("MeshFilter not found, cannot get a random point.");
-            return false;
-        }
-
-        int randomIndex = Random.Range(0, mapSize * mapSize);
-        Vector3 randomLocalPos = meshFilter.sharedMesh.vertices[randomIndex];
-        Vector3 randomWorldPos = meshFilter.transform.TransformPoint(randomLocalPos);
-
-        NavMeshHit hit;
-        if (NavMesh.SamplePosition(randomWorldPos, out hit, 20.0f, NavMesh.AllAreas))
-        {
-            point = hit.position;
-            return true;
-        }
-        else
-        {
-            Debug.LogError($"Failed to find a valid point on the NavMesh near {randomWorldPos}. Is the NavMesh baked and is the area walkable?");
-            return false;
-        }
-    }
-
-    void OnDrawGizmos()
-    {
-        if (hasPathPoints)
-        {
-            Gizmos.color = Color.green;
-            Gizmos.DrawSphere(pathStartPoint, 1f);
-            Gizmos.color = Color.red;
-            Gizmos.DrawSphere(pathEndPoint, 1f);
         }
     }
 }
