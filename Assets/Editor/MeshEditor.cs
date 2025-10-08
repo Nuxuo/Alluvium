@@ -49,6 +49,27 @@ public class MeshEditor : Editor
             }
         }
 
+        if (GUILayout.Button("Bake NavMesh"))
+        {
+            terrainGenerator.BakeNavMesh();
+        }
+
+        // Add this section
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Pathfinding", EditorStyles.boldLabel);
+        if (GUILayout.Button("Test Pathfinding"))
+        {
+            if (Application.isPlaying)
+            {
+                terrainGenerator.TestPathfinding();
+            }
+            else
+            {
+                Debug.LogWarning("You must be in Play Mode to test pathfinding!");
+            }
+        }
+
+
         EditorGUILayout.Space();
         EditorGUILayout.LabelField("Explosions", EditorStyles.boldLabel);
 
