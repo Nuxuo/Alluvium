@@ -227,6 +227,14 @@ public class TerrainGenerator : MonoBehaviour
 
             terrainHolder = holder.transform;
         }
+        else
+        {
+            while (terrainHolder.childCount > 0)
+            {
+                DestroyImmediate(terrainHolder.GetChild(0).gameObject);
+            }
+        }
+
 
         // Generate chunks
         for (int chunkZ = 0; chunkZ < numChunks; chunkZ++)
@@ -283,15 +291,22 @@ public class TerrainGenerator : MonoBehaviour
 
     Mesh GenerateChunkMesh(int chunkX, int chunkZ)
     {
-        List<Vector3> verts = new List<Vector3>();
-        List<int> triangles = new List<int>();
-
         int startX = chunkX * chunkSize;
         int startZ = chunkZ * chunkSize;
         int endX = Mathf.Min(startX + chunkSize, mapSize - 1);
         int endZ = Mathf.Min(startZ + chunkSize, mapSize - 1);
 
-        // Generate vertices (include overlap for seamless chunks)
+        int width = endX - startX + 1;
+        int height = endZ - startZ + 1;
+        int vertCount = width * height;
+        int triCount = (width - 1) * (height - 1) * 6;
+
+        // Pre-allocate arrays
+        Vector3[] verts = new Vector3[vertCount];
+        int[] triangles = new int[triCount];
+
+        // Generate vertices
+        int vertIndex = 0;
         for (int z = startZ; z <= endZ; z++)
         {
             for (int x = startX; x <= endX; x++)
@@ -302,109 +317,121 @@ public class TerrainGenerator : MonoBehaviour
                 Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
 
                 float normalizedHeight = map[borderedMapIndex];
-                pos += Vector3.up * normalizedHeight * elevationScale;
-                verts.Add(pos);
+                pos.y = normalizedHeight * elevationScale;
+                verts[vertIndex++] = pos;
             }
         }
 
         // Generate triangles
-        int width = endX - startX + 1;
-        for (int z = 0; z < endZ - startZ; z++)
+        int triIndex = 0;
+        for (int z = 0; z < height - 1; z++)
         {
-            for (int x = 0; x < endX - startX; x++)
+            for (int x = 0; x < width - 1; x++)
             {
                 int i = z * width + x;
 
-                triangles.Add(i + width);
-                triangles.Add(i + width + 1);
-                triangles.Add(i);
+                triangles[triIndex++] = i + width;
+                triangles[triIndex++] = i + width + 1;
+                triangles[triIndex++] = i;
 
-                triangles.Add(i + width + 1);
-                triangles.Add(i + 1);
-                triangles.Add(i);
+                triangles[triIndex++] = i + width + 1;
+                triangles[triIndex++] = i + 1;
+                triangles[triIndex++] = i;
             }
         }
 
         Mesh mesh = new Mesh();
         mesh.name = $"TerrainChunk_{chunkX}_{chunkZ}";
-        mesh.vertices = verts.ToArray();
-        mesh.triangles = triangles.ToArray();
+        mesh.vertices = verts;
+        mesh.triangles = triangles;
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
         return mesh;
     }
 
-    void SmoothChunkNormals()
+void SmoothChunkNormals()
+{
+    Dictionary<long, Vector3> boundaryNormals = new Dictionary<long, Vector3>();
+    Dictionary<long, int> boundaryCounts = new Dictionary<long, int>();
+
+    // First pass: only process boundary vertices
+    foreach (var chunk in terrainChunks)
     {
-        // Create a dictionary to store vertex positions and their accumulated normals
-        Dictionary<Vector3, Vector3> vertexNormals = new Dictionary<Vector3, Vector3>();
-        Dictionary<Vector3, int> vertexCounts = new Dictionary<Vector3, int>();
-
-        // First pass: accumulate normals for all vertices
-        foreach (var chunk in terrainChunks)
+        Vector3[] vertices = chunk.mesh.vertices;
+        Vector3[] normals = chunk.mesh.normals;
+        
+        int width = chunkSize + 1;
+        int height = chunkSize + 1;
+        
+        // Only process edges
+        for (int i = 0; i < vertices.Length; i++)
         {
-            Vector3[] vertices = chunk.mesh.vertices;
-            Vector3[] normals = chunk.mesh.normals;
-            Transform chunkTransform = chunk.meshFilter.transform;
+            int x = i % width;
+            int z = i / width;
+            
+            // Skip interior vertices
+            if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
+                continue;
+            
+            Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
+            long key = ((long)(worldPos.x * 1000f) << 42) | 
+                      ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                      ((long)(worldPos.z * 1000f) & 0x1FFFFF);
 
-            for (int i = 0; i < vertices.Length; i++)
+            Vector3 worldNormal = chunk.meshFilter.transform.TransformDirection(normals[i]);
+
+            if (!boundaryNormals.ContainsKey(key))
             {
-                // Convert to world position for comparison
-                Vector3 worldPos = chunkTransform.TransformPoint(vertices[i]);
-                // Round to avoid floating point precision issues
-                Vector3 roundedPos = new Vector3(
-                    Mathf.Round(worldPos.x * 1000f) / 1000f,
-                    Mathf.Round(worldPos.y * 1000f) / 1000f,
-                    Mathf.Round(worldPos.z * 1000f) / 1000f
-                );
-
-                Vector3 worldNormal = chunkTransform.TransformDirection(normals[i]);
-
-                if (!vertexNormals.ContainsKey(roundedPos))
-                {
-                    vertexNormals[roundedPos] = Vector3.zero;
-                    vertexCounts[roundedPos] = 0;
-                }
-
-                vertexNormals[roundedPos] += worldNormal;
-                vertexCounts[roundedPos]++;
+                boundaryNormals[key] = worldNormal;
+                boundaryCounts[key] = 1;
             }
-        }
-
-        // Average the normals
-        List<Vector3> keys = new List<Vector3>(vertexNormals.Keys);
-        foreach (var key in keys)
-        {
-            vertexNormals[key] = (vertexNormals[key] / vertexCounts[key]).normalized;
-        }
-
-        // Second pass: apply smoothed normals back to chunks
-        foreach (var chunk in terrainChunks)
-        {
-            Vector3[] vertices = chunk.mesh.vertices;
-            Vector3[] normals = chunk.mesh.normals;
-            Transform chunkTransform = chunk.meshFilter.transform;
-
-            for (int i = 0; i < vertices.Length; i++)
+            else
             {
-                Vector3 worldPos = chunkTransform.TransformPoint(vertices[i]);
-                Vector3 roundedPos = new Vector3(
-                    Mathf.Round(worldPos.x * 1000f) / 1000f,
-                    Mathf.Round(worldPos.y * 1000f) / 1000f,
-                    Mathf.Round(worldPos.z * 1000f) / 1000f
-                );
-
-                if (vertexNormals.ContainsKey(roundedPos))
-                {
-                    // Convert smoothed world normal back to local space
-                    normals[i] = chunkTransform.InverseTransformDirection(vertexNormals[roundedPos]);
-                }
+                boundaryNormals[key] += worldNormal;
+                boundaryCounts[key]++;
             }
-
-            chunk.mesh.normals = normals;
         }
     }
+
+    // Average
+    var keys = new List<long>(boundaryNormals.Keys);
+    foreach (var key in keys)
+    {
+        boundaryNormals[key] = (boundaryNormals[key] / boundaryCounts[key]).normalized;
+    }
+
+    // Second pass: apply only to boundary vertices
+    foreach (var chunk in terrainChunks)
+    {
+        Vector3[] vertices = chunk.mesh.vertices;
+        Vector3[] normals = chunk.mesh.normals;
+        
+        int width = chunkSize + 1;
+        int height = chunkSize + 1;
+        
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            int x = i % width;
+            int z = i / width;
+            
+            if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
+                continue;
+            
+            Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
+            long key = ((long)(worldPos.x * 1000f) << 42) | 
+                      ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                      ((long)(worldPos.z * 1000f) & 0x1FFFFF);
+
+            if (boundaryNormals.TryGetValue(key, out Vector3 smoothedNormal))
+            {
+                normals[i] = chunk.meshFilter.transform.InverseTransformDirection(smoothedNormal);
+            }
+        }
+
+        chunk.mesh.normals = normals;
+    }
+}
 
     void CreateSidesMesh()
     {

@@ -7,7 +7,7 @@ public class HeightMapGenerator : MonoBehaviour {
     public int numOctaves = 7;
     public float persistence = .5f;
     public float lacunarity = 2;
-    public float initialScale = 2;
+    public float initialScale = 1;
 
     public bool useComputeShader = true;
     public ComputeShader heightMapComputeShader;

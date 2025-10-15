@@ -16,6 +16,20 @@ public class MeshEditor : Editor
         }
 
         EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Building Placement", EditorStyles.boldLabel);
+
+        if (GUILayout.Button("Place Random Building"))
+        {
+            BuildingPlacer buildingPlacer = terrainGenerator.GetComponent<BuildingPlacer>();
+            if (buildingPlacer == null)
+            {
+                buildingPlacer = terrainGenerator.gameObject.AddComponent<BuildingPlacer>();
+                Debug.Log("BuildingPlacer component was added.");
+            }
+            buildingPlacer.PlaceRandomBuilding();
+        }
+
+        EditorGUILayout.Space();
         EditorGUILayout.LabelField("Pathfinding", EditorStyles.boldLabel);
 
         if (GUILayout.Button("Find and Draw Path"))
