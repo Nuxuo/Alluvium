@@ -2,7 +2,6 @@
 using Unity.AI.Navigation;
 using UnityEngine;
 using UnityEngine.AI;
-using UnityEngine.WSA;
 
 public class TerrainGenerator : MonoBehaviour
 {
@@ -238,6 +237,9 @@ public class TerrainGenerator : MonoBehaviour
             }
         }
 
+        // FIX: Smooth normals across chunk boundaries
+        SmoothChunkNormals();
+
         // Generate sides as separate mesh
         if (generateSides)
         {
@@ -263,7 +265,7 @@ public class TerrainGenerator : MonoBehaviour
         chunk.gameObject.transform.parent = parent;
         chunk.gameObject.transform.localPosition = Vector3.zero;
         chunk.gameObject.transform.localRotation = Quaternion.identity;
-        chunk.gameObject.transform.localScale = new Vector3(1,1,1);
+        chunk.gameObject.transform.localScale = new Vector3(1, 1, 1);
 
         // Add components
         chunk.meshFilter = chunk.gameObject.AddComponent<MeshFilter>();
@@ -331,6 +333,77 @@ public class TerrainGenerator : MonoBehaviour
         mesh.RecalculateBounds();
 
         return mesh;
+    }
+
+    void SmoothChunkNormals()
+    {
+        // Create a dictionary to store vertex positions and their accumulated normals
+        Dictionary<Vector3, Vector3> vertexNormals = new Dictionary<Vector3, Vector3>();
+        Dictionary<Vector3, int> vertexCounts = new Dictionary<Vector3, int>();
+
+        // First pass: accumulate normals for all vertices
+        foreach (var chunk in terrainChunks)
+        {
+            Vector3[] vertices = chunk.mesh.vertices;
+            Vector3[] normals = chunk.mesh.normals;
+            Transform chunkTransform = chunk.meshFilter.transform;
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                // Convert to world position for comparison
+                Vector3 worldPos = chunkTransform.TransformPoint(vertices[i]);
+                // Round to avoid floating point precision issues
+                Vector3 roundedPos = new Vector3(
+                    Mathf.Round(worldPos.x * 1000f) / 1000f,
+                    Mathf.Round(worldPos.y * 1000f) / 1000f,
+                    Mathf.Round(worldPos.z * 1000f) / 1000f
+                );
+
+                Vector3 worldNormal = chunkTransform.TransformDirection(normals[i]);
+
+                if (!vertexNormals.ContainsKey(roundedPos))
+                {
+                    vertexNormals[roundedPos] = Vector3.zero;
+                    vertexCounts[roundedPos] = 0;
+                }
+
+                vertexNormals[roundedPos] += worldNormal;
+                vertexCounts[roundedPos]++;
+            }
+        }
+
+        // Average the normals
+        List<Vector3> keys = new List<Vector3>(vertexNormals.Keys);
+        foreach (var key in keys)
+        {
+            vertexNormals[key] = (vertexNormals[key] / vertexCounts[key]).normalized;
+        }
+
+        // Second pass: apply smoothed normals back to chunks
+        foreach (var chunk in terrainChunks)
+        {
+            Vector3[] vertices = chunk.mesh.vertices;
+            Vector3[] normals = chunk.mesh.normals;
+            Transform chunkTransform = chunk.meshFilter.transform;
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                Vector3 worldPos = chunkTransform.TransformPoint(vertices[i]);
+                Vector3 roundedPos = new Vector3(
+                    Mathf.Round(worldPos.x * 1000f) / 1000f,
+                    Mathf.Round(worldPos.y * 1000f) / 1000f,
+                    Mathf.Round(worldPos.z * 1000f) / 1000f
+                );
+
+                if (vertexNormals.ContainsKey(roundedPos))
+                {
+                    // Convert smoothed world normal back to local space
+                    normals[i] = chunkTransform.InverseTransformDirection(vertexNormals[roundedPos]);
+                }
+            }
+
+            chunk.mesh.normals = normals;
+        }
     }
 
     void CreateSidesMesh()
