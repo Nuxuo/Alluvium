@@ -98,6 +98,13 @@ public class BuildingPlacer : MonoBehaviour
 
     Vector2Int WorldToMapCoordinates(Vector3 worldPosition)
     {
+        // Convert world position to local space of terrain
+        MeshFilter meshFilter = terrainGenerator.GetMeshFilter();
+        if (meshFilter != null && meshFilter.transform != null)
+        {
+            worldPosition = meshFilter.transform.InverseTransformPoint(worldPosition);
+        }
+
         // With 0.001 spacing, center is at (mapSize-1)/2
         float centerOffset = (mapSize - 1) * 0.5f;
 
@@ -111,10 +118,19 @@ public class BuildingPlacer : MonoBehaviour
     {
         float centerOffset = (mapSize - 1) * 0.5f;
 
-        float worldX = (mapCoord.x - centerOffset) * VERTEX_SPACING;
-        float worldZ = (mapCoord.y - centerOffset) * VERTEX_SPACING;
+        float localX = (mapCoord.x - centerOffset) * VERTEX_SPACING;
+        float localZ = (mapCoord.y - centerOffset) * VERTEX_SPACING;
 
-        return new Vector3(worldX, worldHeight, worldZ);
+        Vector3 localPos = new Vector3(localX, worldHeight, localZ);
+
+        // Convert local position to world space
+        MeshFilter meshFilter = terrainGenerator.GetMeshFilter();
+        if (meshFilter != null && meshFilter.transform != null)
+        {
+            return meshFilter.transform.TransformPoint(localPos);
+        }
+
+        return localPos;
     }
 
     bool IsValidPlacement(Vector2Int mapCoord, int width)
