@@ -7,6 +7,7 @@ public class BuildingData
     public GameObject prefab;
     public int width = 5;
     public string name;
+    public float maxSlopeDeviation = 2f;
 }
 
 public class BuildingPlacer : MonoBehaviour
@@ -95,9 +96,9 @@ public class BuildingPlacer : MonoBehaviour
         // Convert world position to map coordinates
         Vector2Int mapCoord = WorldToMapCoordinates(worldPosition);
 
-        if (!IsValidPlacement(mapCoord, selectedBuilding.width))
+        if (!IsValidPlacement(mapCoord, selectedBuilding.width, selectedBuilding.maxSlopeDeviation))
         {
-            Debug.LogWarning("Invalid building placement location!");
+            Debug.LogWarning($"Invalid building placement location! Terrain too steep or out of bounds.");
             return;
         }
 
@@ -154,14 +155,38 @@ public class BuildingPlacer : MonoBehaviour
         return localPos;
     }
 
-    bool IsValidPlacement(Vector2Int mapCoord, int width)
+    bool IsValidPlacement(Vector2Int mapCoord, int width, float maxSlopeDeviation)
     {
         int halfWidth = width / 2;
 
-        return mapCoord.x - halfWidth >= 0 &&
-               mapCoord.x + halfWidth < mapSize &&
-               mapCoord.y - halfWidth >= 0 &&
-               mapCoord.y + halfWidth < mapSize;
+        // Check bounds
+        if (mapCoord.x - halfWidth < 0 ||
+            mapCoord.x + halfWidth >= mapSize ||
+            mapCoord.y - halfWidth < 0 ||
+            mapCoord.y + halfWidth >= mapSize)
+            return false;
+
+        // Check slope deviation (height difference across building area)
+        float minHeight = float.MaxValue;
+        float maxHeight = float.MinValue;
+
+        for (int z = -halfWidth; z <= halfWidth; z++)
+        {
+            for (int x = -halfWidth; x <= halfWidth; x++)
+            {
+                int mapX = mapCoord.x + x;
+                int mapZ = mapCoord.y + z;
+                int borderedIndex = (mapZ + erosionBrushRadius) * mapSizeWithBorder +
+                                   (mapX + erosionBrushRadius);
+                float height = heightMap[borderedIndex] * terrainGenerator.elevationScale;
+
+                if (height < minHeight) minHeight = height;
+                if (height > maxHeight) maxHeight = height;
+            }
+        }
+
+        float heightDifference = maxHeight - minHeight;
+        return heightDifference <= maxSlopeDeviation;
     }
 
     float FlattenTerrainArea(Vector2Int centerCoord, int width)
@@ -246,11 +271,34 @@ public class BuildingPlacer : MonoBehaviour
         int currentMapSize = terrainGenerator.mapSize;
         int halfWidth = selectedBuilding.width / 2;
 
-        int randomX = Random.Range(halfWidth, currentMapSize - halfWidth);
-        int randomZ = Random.Range(halfWidth, currentMapSize - halfWidth);
+        // Try multiple times to find valid placement
+        int maxAttempts = 100;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            int randomX = Random.Range(halfWidth, currentMapSize - halfWidth);
+            int randomZ = Random.Range(halfWidth, currentMapSize - halfWidth);
 
-        Vector3 worldPos = MapToWorldCoordinates(new Vector2Int(randomX, randomZ), 0);
-        PlaceBuilding(worldPos);
+            Vector3 worldPos = MapToWorldCoordinates(new Vector2Int(randomX, randomZ), 0);
+
+            // Check if this location is valid
+            mapSize = terrainGenerator.mapSize;
+            erosionBrushRadius = terrainGenerator.erosionBrushRadius;
+            mapSizeWithBorder = mapSize + erosionBrushRadius * 2;
+
+            var mapField = typeof(TerrainGenerator).GetField("map",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            heightMap = (float[])mapField.GetValue(terrainGenerator);
+
+            Vector2Int mapCoord = new Vector2Int(randomX, randomZ);
+
+            if (IsValidPlacement(mapCoord, selectedBuilding.width, selectedBuilding.maxSlopeDeviation))
+            {
+                PlaceBuilding(worldPos);
+                return;
+            }
+        }
+
+        Debug.LogWarning($"Could not find valid placement location after {maxAttempts} attempts. Try adjusting maxSlopeDeviation.");
     }
 
     public void ClearAllBuildings()
