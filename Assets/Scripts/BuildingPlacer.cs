@@ -1,17 +1,27 @@
 using UnityEngine;
 using System.Collections.Generic;
-using System.Linq;
+
+[System.Serializable]
+public class BuildingData
+{
+    public GameObject prefab;
+    public int width = 5;
+    public string name;
+}
 
 public class BuildingPlacer : MonoBehaviour
 {
     [Header("Building Settings")]
-    public int buildingWidth = 5;
+    public List<BuildingData> buildings = new List<BuildingData>();
+    public int selectedBuildingIndex = 0;
 
+    private const float VERTEX_SPACING = 0.001f;
     private TerrainGenerator terrainGenerator;
     private float[] heightMap;
     private int mapSizeWithBorder;
     private int mapSize;
     private int erosionBrushRadius;
+    private List<GameObject> placedBuildings = new List<GameObject>();
 
     void Awake()
     {
@@ -26,12 +36,31 @@ public class BuildingPlacer : MonoBehaviour
             return;
         }
 
+        if (buildings.Count == 0)
+        {
+            Debug.LogError("No buildings configured!");
+            return;
+        }
+
+        if (selectedBuildingIndex < 0 || selectedBuildingIndex >= buildings.Count)
+        {
+            Debug.LogError("Invalid building index!");
+            return;
+        }
+
+        BuildingData selectedBuilding = buildings[selectedBuildingIndex];
+        if (selectedBuilding.prefab == null)
+        {
+            Debug.LogError("Selected building has no prefab assigned!");
+            return;
+        }
+
         // Get terrain data
         mapSize = terrainGenerator.mapSize;
         erosionBrushRadius = terrainGenerator.erosionBrushRadius;
         mapSizeWithBorder = mapSize + erosionBrushRadius * 2;
 
-        // Access the heightmap through reflection since it's private
+        // Access the heightmap through reflection
         var mapField = typeof(TerrainGenerator).GetField("map",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         heightMap = (float[])mapField.GetValue(terrainGenerator);
@@ -45,37 +74,52 @@ public class BuildingPlacer : MonoBehaviour
         // Convert world position to map coordinates
         Vector2Int mapCoord = WorldToMapCoordinates(worldPosition);
 
-        if (!IsValidPlacement(mapCoord))
+        if (!IsValidPlacement(mapCoord, selectedBuilding.width))
         {
             Debug.LogWarning("Invalid building placement location!");
             return;
         }
 
-        // Flatten the terrain area
-        FlattenTerrainArea(mapCoord);
+        // Flatten the terrain area and get the height
+        float flattenedHeight = FlattenTerrainArea(mapCoord, selectedBuilding.width);
 
-        // Rebuild chunks and navmesh
+        // Rebuild terrain
         RebuildTerrain();
 
-        Debug.Log($"Building placed at map coordinates: {mapCoord}");
+        // Convert map coordinates back to world position for accurate placement
+        Vector3 buildingPosition = MapToWorldCoordinates(mapCoord, flattenedHeight);
+        GameObject buildingInstance = Instantiate(selectedBuilding.prefab, buildingPosition, Quaternion.identity);
+        buildingInstance.name = $"{selectedBuilding.name ?? selectedBuilding.prefab.name} ({placedBuildings.Count})";
+        buildingInstance.transform.parent = transform;
+        placedBuildings.Add(buildingInstance);
+
+        Debug.Log($"Building placed at {buildingPosition}");
     }
 
     Vector2Int WorldToMapCoordinates(Vector3 worldPosition)
     {
-        // Convert world position to normalized coordinates (-1 to 1)
-        float normalizedX = worldPosition.x / terrainGenerator.scale;
-        float normalizedZ = worldPosition.z / terrainGenerator.scale;
+        // With 0.001 spacing, center is at (mapSize-1)/2
+        float centerOffset = (mapSize - 1) * 0.5f;
 
-        // Convert to map coordinates (0 to mapSize-1)
-        int mapX = Mathf.RoundToInt((normalizedX + 1f) * 0.5f * (mapSize - 1));
-        int mapZ = Mathf.RoundToInt((normalizedZ + 1f) * 0.5f * (mapSize - 1));
+        int mapX = Mathf.RoundToInt(worldPosition.x / VERTEX_SPACING + centerOffset);
+        int mapZ = Mathf.RoundToInt(worldPosition.z / VERTEX_SPACING + centerOffset);
 
         return new Vector2Int(mapX, mapZ);
     }
 
-    bool IsValidPlacement(Vector2Int mapCoord)
+    Vector3 MapToWorldCoordinates(Vector2Int mapCoord, float worldHeight)
     {
-        int halfWidth = buildingWidth / 2;
+        float centerOffset = (mapSize - 1) * 0.5f;
+
+        float worldX = (mapCoord.x - centerOffset) * VERTEX_SPACING;
+        float worldZ = (mapCoord.y - centerOffset) * VERTEX_SPACING;
+
+        return new Vector3(worldX, worldHeight, worldZ);
+    }
+
+    bool IsValidPlacement(Vector2Int mapCoord, int width)
+    {
+        int halfWidth = width / 2;
 
         return mapCoord.x - halfWidth >= 0 &&
                mapCoord.x + halfWidth < mapSize &&
@@ -83,9 +127,9 @@ public class BuildingPlacer : MonoBehaviour
                mapCoord.y + halfWidth < mapSize;
     }
 
-    void FlattenTerrainArea(Vector2Int centerCoord)
+    float FlattenTerrainArea(Vector2Int centerCoord, int width)
     {
-        int halfWidth = buildingWidth / 2;
+        int halfWidth = width / 2;
         List<float> heights = new List<float>();
 
         // Collect all heights in the building area
@@ -122,48 +166,61 @@ public class BuildingPlacer : MonoBehaviour
         var mapField = typeof(TerrainGenerator).GetField("map",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         mapField.SetValue(terrainGenerator, heightMap);
+
+        // Convert to world height
+        return medianHeight * terrainGenerator.elevationScale;
     }
 
     void RebuildTerrain()
     {
-        // Use reflection to call private ConstructChunkedMesh method
         var constructMethod = typeof(TerrainGenerator).GetMethod("ConstructChunkedMesh",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         constructMethod.Invoke(terrainGenerator, null);
 
-        // Use reflection to call private BakeNavMesh method
         var bakeMethod = typeof(TerrainGenerator).GetMethod("BakeNavMesh",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         bakeMethod.Invoke(terrainGenerator, null);
-
-        Debug.Log("Terrain chunks and NavMesh updated!");
     }
 
     public void PlaceRandomBuilding()
     {
-        terrainGenerator = GetComponent<TerrainGenerator>();
+        if (buildings.Count == 0)
+        {
+            Debug.LogError("No buildings configured!");
+            return;
+        }
 
+        if (selectedBuildingIndex < 0 || selectedBuildingIndex >= buildings.Count)
+        {
+            Debug.LogError("Invalid building index!");
+            return;
+        }
+
+        terrainGenerator = GetComponent<TerrainGenerator>();
         if (terrainGenerator == null)
         {
             Debug.LogError("TerrainGenerator not found!");
             return;
         }
 
-        // Initialize terrain data
+        BuildingData selectedBuilding = buildings[selectedBuildingIndex];
         int currentMapSize = terrainGenerator.mapSize;
+        int halfWidth = selectedBuilding.width / 2;
 
-        // Pick a random position within valid bounds
-        int halfWidth = buildingWidth / 2;
         int randomX = Random.Range(halfWidth, currentMapSize - halfWidth);
         int randomZ = Random.Range(halfWidth, currentMapSize - halfWidth);
 
-        // Convert to world position
-        float normalizedX = randomX / (currentMapSize - 1f);
-        float normalizedZ = randomZ / (currentMapSize - 1f);
-        float worldX = (normalizedX * 2f - 1f) * terrainGenerator.scale;
-        float worldZ = (normalizedZ * 2f - 1f) * terrainGenerator.scale;
-
-        Vector3 worldPos = new Vector3(worldX, 0, worldZ);
+        Vector3 worldPos = MapToWorldCoordinates(new Vector2Int(randomX, randomZ), 0);
         PlaceBuilding(worldPos);
+    }
+
+    public void ClearAllBuildings()
+    {
+        foreach (var building in placedBuildings)
+        {
+            if (building != null)
+                DestroyImmediate(building);
+        }
+        placedBuildings.Clear();
     }
 }

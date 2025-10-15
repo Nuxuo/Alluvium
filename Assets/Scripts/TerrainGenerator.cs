@@ -291,6 +291,8 @@ public class TerrainGenerator : MonoBehaviour
 
     Mesh GenerateChunkMesh(int chunkX, int chunkZ)
     {
+        const float VERTEX_SPACING = 0.001f;
+
         int startX = chunkX * chunkSize;
         int startZ = chunkZ * chunkSize;
         int endX = Mathf.Min(startX + chunkSize, mapSize - 1);
@@ -305,6 +307,9 @@ public class TerrainGenerator : MonoBehaviour
         Vector3[] verts = new Vector3[vertCount];
         int[] triangles = new int[triCount];
 
+        // Center offset to center the terrain at origin
+        float centerOffset = (mapSize - 1) * 0.5f * VERTEX_SPACING;
+
         // Generate vertices
         int vertIndex = 0;
         for (int z = startZ; z <= endZ; z++)
@@ -313,11 +318,12 @@ public class TerrainGenerator : MonoBehaviour
             {
                 int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
 
-                Vector2 percent = new Vector2(x / (mapSize - 1f), z / (mapSize - 1f));
-                Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+                // Position with 0.001 spacing per vertex
+                Vector3 pos;
+                pos.x = x * VERTEX_SPACING - centerOffset;
+                pos.z = z * VERTEX_SPACING - centerOffset;
+                pos.y = map[borderedMapIndex] * elevationScale;
 
-                float normalizedHeight = map[borderedMapIndex];
-                pos.y = normalizedHeight * elevationScale;
                 verts[vertIndex++] = pos;
             }
         }
@@ -350,91 +356,93 @@ public class TerrainGenerator : MonoBehaviour
         return mesh;
     }
 
-void SmoothChunkNormals()
-{
-    Dictionary<long, Vector3> boundaryNormals = new Dictionary<long, Vector3>();
-    Dictionary<long, int> boundaryCounts = new Dictionary<long, int>();
-
-    // First pass: only process boundary vertices
-    foreach (var chunk in terrainChunks)
+    void SmoothChunkNormals()
     {
-        Vector3[] vertices = chunk.mesh.vertices;
-        Vector3[] normals = chunk.mesh.normals;
-        
-        int width = chunkSize + 1;
-        int height = chunkSize + 1;
-        
-        // Only process edges
-        for (int i = 0; i < vertices.Length; i++)
+        Dictionary<long, Vector3> boundaryNormals = new Dictionary<long, Vector3>();
+        Dictionary<long, int> boundaryCounts = new Dictionary<long, int>();
+
+        // First pass: only process boundary vertices
+        foreach (var chunk in terrainChunks)
         {
-            int x = i % width;
-            int z = i / width;
-            
-            // Skip interior vertices
-            if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
-                continue;
-            
-            Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
-            long key = ((long)(worldPos.x * 1000f) << 42) | 
-                      ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
-                      ((long)(worldPos.z * 1000f) & 0x1FFFFF);
-
-            Vector3 worldNormal = chunk.meshFilter.transform.TransformDirection(normals[i]);
-
-            if (!boundaryNormals.ContainsKey(key))
-            {
-                boundaryNormals[key] = worldNormal;
-                boundaryCounts[key] = 1;
-            }
-            else
-            {
-                boundaryNormals[key] += worldNormal;
-                boundaryCounts[key]++;
-            }
-        }
-    }
-
-    // Average
-    var keys = new List<long>(boundaryNormals.Keys);
-    foreach (var key in keys)
-    {
-        boundaryNormals[key] = (boundaryNormals[key] / boundaryCounts[key]).normalized;
-    }
-
-    // Second pass: apply only to boundary vertices
-    foreach (var chunk in terrainChunks)
-    {
-        Vector3[] vertices = chunk.mesh.vertices;
-        Vector3[] normals = chunk.mesh.normals;
+            Vector3[] vertices = chunk.mesh.vertices;
+            Vector3[] normals = chunk.mesh.normals;
         
-        int width = chunkSize + 1;
-        int height = chunkSize + 1;
+            int width = chunkSize + 1;
+            int height = chunkSize + 1;
         
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            int x = i % width;
-            int z = i / width;
-            
-            if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
-                continue;
-            
-            Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
-            long key = ((long)(worldPos.x * 1000f) << 42) | 
-                      ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
-                      ((long)(worldPos.z * 1000f) & 0x1FFFFF);
-
-            if (boundaryNormals.TryGetValue(key, out Vector3 smoothedNormal))
+            // Only process edges
+            for (int i = 0; i < vertices.Length; i++)
             {
-                normals[i] = chunk.meshFilter.transform.InverseTransformDirection(smoothedNormal);
+                int x = i % width;
+                int z = i / width;
+            
+                // Skip interior vertices
+                if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
+                    continue;
+            
+                Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
+                long key = ((long)(worldPos.x * 1000f) << 42) | 
+                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                          ((long)(worldPos.z * 1000f) & 0x1FFFFF);
+
+                Vector3 worldNormal = chunk.meshFilter.transform.TransformDirection(normals[i]);
+
+                if (!boundaryNormals.ContainsKey(key))
+                {
+                    boundaryNormals[key] = worldNormal;
+                    boundaryCounts[key] = 1;
+                }
+                else
+                {
+                    boundaryNormals[key] += worldNormal;
+                    boundaryCounts[key]++;
+                }
             }
         }
 
-        chunk.mesh.normals = normals;
+        // Average
+        var keys = new List<long>(boundaryNormals.Keys);
+        foreach (var key in keys)
+        {
+            boundaryNormals[key] = (boundaryNormals[key] / boundaryCounts[key]).normalized;
+        }
+
+        // Second pass: apply only to boundary vertices
+        foreach (var chunk in terrainChunks)
+        {
+            Vector3[] vertices = chunk.mesh.vertices;
+            Vector3[] normals = chunk.mesh.normals;
+        
+            int width = chunkSize + 1;
+            int height = chunkSize + 1;
+        
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                int x = i % width;
+                int z = i / width;
+            
+                if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
+                    continue;
+            
+                Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
+                long key = ((long)(worldPos.x * 1000f) << 42) | 
+                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                          ((long)(worldPos.z * 1000f) & 0x1FFFFF);
+
+                if (boundaryNormals.TryGetValue(key, out Vector3 smoothedNormal))
+                {
+                    normals[i] = chunk.meshFilter.transform.InverseTransformDirection(smoothedNormal);
+                }
+            }
+
+            chunk.mesh.normals = normals;
+        }
     }
-}
 
     void CreateSidesMesh()
     {
+        const float VERTEX_SPACING = 0.001f;
+
         sidesHolder = new GameObject("Terrain Sides");
         sidesHolder.transform.parent = transform;
         sidesHolder.transform.localPosition = Vector3.zero;
@@ -448,6 +456,9 @@ void SmoothChunkNormals()
         List<Vector3> verts = new List<Vector3>();
         List<int> triangles = new List<int>();
 
+        // Center offset
+        float centerOffset = (mapSize - 1) * 0.5f * VERTEX_SPACING;
+
         // Get edge vertices from heightmap
         List<Vector3> topEdgeVerts = new List<Vector3>();
 
@@ -455,9 +466,10 @@ void SmoothChunkNormals()
         for (int x = 0; x < mapSize; x++)
         {
             int borderedMapIndex = erosionBrushRadius * mapSizeWithBorder + x + erosionBrushRadius;
-            Vector2 percent = new Vector2(x / (mapSize - 1f), 0);
-            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
-            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            Vector3 pos;
+            pos.x = x * VERTEX_SPACING - centerOffset;
+            pos.z = 0 * VERTEX_SPACING - centerOffset;
+            pos.y = map[borderedMapIndex] * elevationScale;
             topEdgeVerts.Add(pos);
         }
 
@@ -465,9 +477,10 @@ void SmoothChunkNormals()
         for (int z = 1; z < mapSize; z++)
         {
             int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + (mapSize - 1) + erosionBrushRadius;
-            Vector2 percent = new Vector2(1, z / (mapSize - 1f));
-            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
-            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            Vector3 pos;
+            pos.x = (mapSize - 1) * VERTEX_SPACING - centerOffset;
+            pos.z = z * VERTEX_SPACING - centerOffset;
+            pos.y = map[borderedMapIndex] * elevationScale;
             topEdgeVerts.Add(pos);
         }
 
@@ -475,9 +488,10 @@ void SmoothChunkNormals()
         for (int x = mapSize - 2; x >= 0; x--)
         {
             int borderedMapIndex = ((mapSize - 1) + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
-            Vector2 percent = new Vector2(x / (mapSize - 1f), 1);
-            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
-            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            Vector3 pos;
+            pos.x = x * VERTEX_SPACING - centerOffset;
+            pos.z = (mapSize - 1) * VERTEX_SPACING - centerOffset;
+            pos.y = map[borderedMapIndex] * elevationScale;
             topEdgeVerts.Add(pos);
         }
 
@@ -485,9 +499,10 @@ void SmoothChunkNormals()
         for (int z = mapSize - 2; z > 0; z--)
         {
             int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + erosionBrushRadius;
-            Vector2 percent = new Vector2(0, z / (mapSize - 1f));
-            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
-            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            Vector3 pos;
+            pos.x = 0 * VERTEX_SPACING - centerOffset;
+            pos.z = z * VERTEX_SPACING - centerOffset;
+            pos.y = map[borderedMapIndex] * elevationScale;
             topEdgeVerts.Add(pos);
         }
 
