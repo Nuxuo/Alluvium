@@ -1,54 +1,73 @@
 ﻿using System.Collections.Generic;
-using UnityEngine;
 using Unity.AI.Navigation;
+using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.WSA;
 
 public class TerrainGenerator : MonoBehaviour
 {
     public bool printTimers;
 
     [Header("Mesh Settings")]
-    public int mapSize = 255;
+    public int mapSize = 1024;
     public float scale = 20;
     public float elevationScale = 10;
     public Material material;
+
+    [Header("Chunk Settings")]
+    public int chunkSize = 64;
 
     [Header("Side Settings")]
     public bool generateSides = true;
     public float sideDepth = 0f;
     public bool generateBottom = false;
+    public Material sideMaterial;
 
     [Header("Erosion Settings")]
     public ComputeShader erosion;
-    public int numErosionIterations = 50000;
-    public int erosionBrushRadius = 3;
+    public int numErosionIterations = 600000;
+    public int erosionBrushRadius = 12;
 
-    public int maxLifetime = 30;
-    public float sedimentCapacityFactor = 3;
+    public int maxLifetime = 160;
+    public float sedimentCapacityFactor = 4;
     public float minSedimentCapacity = .01f;
     public float depositSpeed = 0.3f;
-    public float erodeSpeed = 0.3f;
+    public float erodeSpeed = 0.2f;
 
-    public float evaporateSpeed = .01f;
+    public float evaporateSpeed = .005f;
     public float gravity = 4;
-    public float startSpeed = 1;
+    public float startSpeed = 3;
     public float startWater = 1;
     [Range(0, 1)]
-    public float inertia = 0.3f;
+    public float inertia = 0.1f;
 
     // Internal
     float[] map;
-    Mesh mesh;
     int mapSizeWithBorder;
 
-    MeshRenderer meshRenderer;
-    MeshFilter meshFilter;
+    // Chunk data
+    class ChunkData
+    {
+        public GameObject gameObject;
+        public MeshFilter meshFilter;
+        public MeshRenderer meshRenderer;
+        public MeshCollider meshCollider;
+        public Mesh mesh;
+        public int chunkX, chunkZ;
+    }
+
+    List<ChunkData> terrainChunks = new List<ChunkData>();
+    GameObject sidesHolder;
+    MeshFilter sidesMeshFilter;
+    MeshRenderer sidesMeshRenderer;
+    MeshCollider sidesMeshCollider;
+    Mesh sidesMesh;
+
     NavMeshSurface navMeshSurface;
-    MeshCollider meshCollider;
 
     public void GenerateTerrain()
     {
-        // Try to find the Pathfinder component and clear any existing paths
+        // Clear any existing paths
         if (TryGetComponent(out Pathfinder pathfinder))
         {
             pathfinder.ClearPath();
@@ -72,10 +91,10 @@ public class TerrainGenerator : MonoBehaviour
             sw.Restart();
         }
 
-        ContructMesh();
+        ConstructChunkedMesh();
         if (printTimers)
         {
-            Debug.Log($"Mesh constructed in {sw.ElapsedMilliseconds}ms");
+            Debug.Log($"Chunked mesh constructed in {sw.ElapsedMilliseconds}ms");
             sw.Restart();
         }
 
@@ -174,227 +193,281 @@ public class TerrainGenerator : MonoBehaviour
         brushWeightBuffer.Release();
     }
 
-    public void ContructMesh()
+    void ConstructChunkedMesh()
+    {
+        // Clear existing chunks
+        foreach (var chunk in terrainChunks)
+        {
+            if (chunk.gameObject != null)
+                DestroyImmediate(chunk.gameObject);
+        }
+        terrainChunks.Clear();
+
+        // Clear sides mesh
+        if (sidesHolder != null)
+            DestroyImmediate(sidesHolder);
+
+        // Validate chunk size
+        if (mapSize % chunkSize != 0)
+        {
+            Debug.LogError($"Chunk size {chunkSize} must divide map size {mapSize} evenly!");
+            chunkSize = 64;
+        }
+
+        int numChunks = mapSize / chunkSize;
+
+        // Create terrain holder if needed
+        Transform terrainHolder = transform.Find("Terrain Chunks");
+        if (terrainHolder == null)
+        {
+            GameObject holder = new GameObject("Terrain Chunks");
+            holder.transform.parent = transform;
+            holder.transform.localPosition = Vector3.zero;
+            holder.transform.localRotation = Quaternion.identity;
+            holder.transform.localScale = new Vector3(1, 1, 1);
+
+            terrainHolder = holder.transform;
+        }
+
+        // Generate chunks
+        for (int chunkZ = 0; chunkZ < numChunks; chunkZ++)
+        {
+            for (int chunkX = 0; chunkX < numChunks; chunkX++)
+            {
+                CreateChunk(chunkX, chunkZ, terrainHolder);
+            }
+        }
+
+        // Generate sides as separate mesh
+        if (generateSides)
+        {
+            CreateSidesMesh();
+        }
+
+        // Set material properties
+        if (material != null)
+        {
+            material.SetFloat("_MaxHeight", elevationScale);
+        }
+    }
+
+    void CreateChunk(int chunkX, int chunkZ, Transform parent)
+    {
+        ChunkData chunk = new ChunkData();
+        chunk.chunkX = chunkX;
+        chunk.chunkZ = chunkZ;
+
+        // Create chunk GameObject
+        string chunkName = $"Chunk_{chunkX}_{chunkZ}";
+        chunk.gameObject = new GameObject(chunkName);
+        chunk.gameObject.transform.parent = parent;
+        chunk.gameObject.transform.localPosition = Vector3.zero;
+        chunk.gameObject.transform.localRotation = Quaternion.identity;
+        chunk.gameObject.transform.localScale = new Vector3(1,1,1);
+
+        // Add components
+        chunk.meshFilter = chunk.gameObject.AddComponent<MeshFilter>();
+        chunk.meshRenderer = chunk.gameObject.AddComponent<MeshRenderer>();
+        chunk.meshCollider = chunk.gameObject.AddComponent<MeshCollider>();
+
+        // Generate chunk mesh
+        chunk.mesh = GenerateChunkMesh(chunkX, chunkZ);
+        chunk.meshFilter.sharedMesh = chunk.mesh;
+        chunk.meshCollider.sharedMesh = chunk.mesh;
+        chunk.meshRenderer.sharedMaterial = material;
+
+        terrainChunks.Add(chunk);
+    }
+
+    Mesh GenerateChunkMesh(int chunkX, int chunkZ)
     {
         List<Vector3> verts = new List<Vector3>();
         List<int> triangles = new List<int>();
 
-        // Generate top surface vertices
-        for (int i = 0; i < mapSize * mapSize; i++)
+        int startX = chunkX * chunkSize;
+        int startZ = chunkZ * chunkSize;
+        int endX = Mathf.Min(startX + chunkSize, mapSize - 1);
+        int endZ = Mathf.Min(startZ + chunkSize, mapSize - 1);
+
+        // Generate vertices (include overlap for seamless chunks)
+        for (int z = startZ; z <= endZ; z++)
         {
-            int x = i % mapSize;
-            int y = i / mapSize;
-            int borderedMapIndex = (y + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
+            for (int x = startX; x <= endX; x++)
+            {
+                int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
 
-            Vector2 percent = new Vector2(x / (mapSize - 1f), y / (mapSize - 1f));
-            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+                Vector2 percent = new Vector2(x / (mapSize - 1f), z / (mapSize - 1f));
+                Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
 
-            float normalizedHeight = map[borderedMapIndex];
-            pos += Vector3.up * normalizedHeight * elevationScale;
-            verts.Add(pos);
+                float normalizedHeight = map[borderedMapIndex];
+                pos += Vector3.up * normalizedHeight * elevationScale;
+                verts.Add(pos);
+            }
         }
 
-        // Generate top surface triangles
-        for (int y = 0; y < mapSize - 1; y++)
+        // Generate triangles
+        int width = endX - startX + 1;
+        for (int z = 0; z < endZ - startZ; z++)
         {
-            for (int x = 0; x < mapSize - 1; x++)
+            for (int x = 0; x < endX - startX; x++)
             {
-                int i = y * mapSize + x;
+                int i = z * width + x;
 
-                triangles.Add(i + mapSize);
-                triangles.Add(i + mapSize + 1);
+                triangles.Add(i + width);
+                triangles.Add(i + width + 1);
                 triangles.Add(i);
 
-                triangles.Add(i + mapSize + 1);
+                triangles.Add(i + width + 1);
                 triangles.Add(i + 1);
                 triangles.Add(i);
             }
         }
 
-        if (generateSides)
-        {
-            int topVertCount = verts.Count;
-
-            // Add bottom edge vertices
-            for (int x = 0; x < mapSize; x++)
-            {
-                Vector3 topVert = verts[x];
-                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
-            }
-            for (int x = 0; x < mapSize; x++)
-            {
-                Vector3 topVert = verts[(mapSize - 1) * mapSize + x];
-                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
-            }
-            for (int y = 1; y < mapSize - 1; y++)
-            {
-                Vector3 topVert = verts[y * mapSize];
-                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
-            }
-            for (int y = 1; y < mapSize - 1; y++)
-            {
-                Vector3 topVert = verts[y * mapSize + mapSize - 1];
-                verts.Add(new Vector3(topVert.x, sideDepth, topVert.z));
-            }
-
-            int bottomStart = topVertCount;
-
-            // Front side
-            for (int x = 0; x < mapSize - 1; x++)
-            {
-                int topLeft = x;
-                int topRight = x + 1;
-                int bottomLeft = bottomStart + x;
-                int bottomRight = bottomStart + x + 1;
-
-                triangles.Add(topLeft);
-                triangles.Add(topRight);
-                triangles.Add(bottomLeft);
-
-                triangles.Add(topRight);
-                triangles.Add(bottomRight);
-                triangles.Add(bottomLeft);
-            }
-
-            // Back side
-            int backOffset = bottomStart + mapSize;
-            for (int x = 0; x < mapSize - 1; x++)
-            {
-                int topLeft = (mapSize - 1) * mapSize + x;
-                int topRight = (mapSize - 1) * mapSize + x + 1;
-                int bottomLeft = backOffset + x;
-                int bottomRight = backOffset + x + 1;
-
-                triangles.Add(bottomLeft);
-                triangles.Add(topRight);
-                triangles.Add(topLeft);
-
-                triangles.Add(bottomLeft);
-                triangles.Add(bottomRight);
-                triangles.Add(topRight);
-            }
-
-            // Left side
-            int leftOffset = bottomStart + mapSize * 2;
-            for (int y = 0; y < mapSize - 1; y++)
-            {
-                int topCurrent = y * mapSize;
-                int topNext = (y + 1) * mapSize;
-                int bottomCurrent = (y == 0) ? bottomStart : leftOffset + y - 1;
-                int bottomNext = (y == mapSize - 2) ? backOffset : leftOffset + y;
-
-                triangles.Add(bottomCurrent);
-                triangles.Add(topNext);
-                triangles.Add(topCurrent);
-
-                triangles.Add(bottomCurrent);
-                triangles.Add(bottomNext);
-                triangles.Add(topNext);
-            }
-
-            // Right side
-            int rightOffset = bottomStart + mapSize * 2 + mapSize - 2;
-            for (int y = 0; y < mapSize - 1; y++)
-            {
-                int topCurrent = y * mapSize + mapSize - 1;
-                int topNext = (y + 1) * mapSize + mapSize - 1;
-                int bottomCurrent = (y == 0) ? bottomStart + mapSize - 1 : rightOffset + y - 1;
-                int bottomNext = (y == mapSize - 2) ? backOffset + mapSize - 1 : rightOffset + y;
-
-                triangles.Add(topCurrent);
-                triangles.Add(topNext);
-                triangles.Add(bottomCurrent);
-
-                triangles.Add(topNext);
-                triangles.Add(bottomNext);
-                triangles.Add(bottomCurrent);
-            }
-
-            // Optional bottom face
-            if (generateBottom)
-            {
-                int b0 = bottomStart;
-                int b1 = bottomStart + mapSize - 1;
-                int b2 = backOffset;
-                int b3 = backOffset + mapSize - 1;
-
-                triangles.Add(b0);
-                triangles.Add(b2);
-                triangles.Add(b1);
-
-                triangles.Add(b1);
-                triangles.Add(b2);
-                triangles.Add(b3);
-            }
-        }
-
-        if (mesh == null)
-        {
-            mesh = new Mesh();
-        }
-        else
-        {
-            mesh.Clear();
-        }
-        mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        Mesh mesh = new Mesh();
+        mesh.name = $"TerrainChunk_{chunkX}_{chunkZ}";
         mesh.vertices = verts.ToArray();
         mesh.triangles = triangles.ToArray();
         mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
 
-        AssignMeshComponents();
-        meshFilter.sharedMesh = mesh;
-        meshCollider.sharedMesh = mesh;
-        meshRenderer.sharedMaterial = material;
-
-        material.SetFloat("_MaxHeight", elevationScale);
+        return mesh;
     }
 
-    void AssignMeshComponents()
+    void CreateSidesMesh()
     {
-        string meshHolderName = "Mesh Holder";
-        Transform meshHolder = transform.Find(meshHolderName);
-        if (meshHolder == null)
+        sidesHolder = new GameObject("Terrain Sides");
+        sidesHolder.transform.parent = transform;
+        sidesHolder.transform.localPosition = Vector3.zero;
+        sidesHolder.transform.localRotation = Quaternion.identity;
+        sidesHolder.transform.localScale = new Vector3(1, 1, 1);
+
+        sidesMeshFilter = sidesHolder.AddComponent<MeshFilter>();
+        sidesMeshRenderer = sidesHolder.AddComponent<MeshRenderer>();
+        sidesMeshCollider = sidesHolder.AddComponent<MeshCollider>();
+
+        List<Vector3> verts = new List<Vector3>();
+        List<int> triangles = new List<int>();
+
+        // Get edge vertices from heightmap
+        List<Vector3> topEdgeVerts = new List<Vector3>();
+
+        // Front edge (z = 0)
+        for (int x = 0; x < mapSize; x++)
         {
-            meshHolder = new GameObject(meshHolderName).transform;
-            meshHolder.transform.parent = transform;
-            meshHolder.transform.localPosition = Vector3.zero;
-            meshHolder.transform.localRotation = Quaternion.identity;
+            int borderedMapIndex = erosionBrushRadius * mapSizeWithBorder + x + erosionBrushRadius;
+            Vector2 percent = new Vector2(x / (mapSize - 1f), 0);
+            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            topEdgeVerts.Add(pos);
         }
 
-        if (!meshHolder.gameObject.GetComponent<MeshFilter>())
+        // Right edge (x = mapSize-1)
+        for (int z = 1; z < mapSize; z++)
         {
-            meshHolder.gameObject.AddComponent<MeshFilter>();
-        }
-        if (!meshHolder.GetComponent<MeshRenderer>())
-        {
-            meshHolder.gameObject.AddComponent<MeshRenderer>();
-        }
-        if (!meshHolder.GetComponent<NavMeshSurface>())
-        {
-            meshHolder.gameObject.AddComponent<NavMeshSurface>();
-        }
-        if (!meshHolder.GetComponent<MeshCollider>())
-        {
-            meshHolder.gameObject.AddComponent<MeshCollider>();
+            int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + (mapSize - 1) + erosionBrushRadius;
+            Vector2 percent = new Vector2(1, z / (mapSize - 1f));
+            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            topEdgeVerts.Add(pos);
         }
 
-        meshRenderer = meshHolder.GetComponent<MeshRenderer>();
-        meshFilter = meshHolder.GetComponent<MeshFilter>();
-        navMeshSurface = meshHolder.GetComponent<NavMeshSurface>();
-        meshCollider = meshHolder.GetComponent<MeshCollider>();
+        // Back edge (z = mapSize-1, reversed)
+        for (int x = mapSize - 2; x >= 0; x--)
+        {
+            int borderedMapIndex = ((mapSize - 1) + erosionBrushRadius) * mapSizeWithBorder + x + erosionBrushRadius;
+            Vector2 percent = new Vector2(x / (mapSize - 1f), 1);
+            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            topEdgeVerts.Add(pos);
+        }
+
+        // Left edge (x = 0, reversed)
+        for (int z = mapSize - 2; z > 0; z--)
+        {
+            int borderedMapIndex = (z + erosionBrushRadius) * mapSizeWithBorder + erosionBrushRadius;
+            Vector2 percent = new Vector2(0, z / (mapSize - 1f));
+            Vector3 pos = new Vector3(percent.x * 2 - 1, 0, percent.y * 2 - 1) * scale;
+            pos += Vector3.up * map[borderedMapIndex] * elevationScale;
+            topEdgeVerts.Add(pos);
+        }
+
+        // Create side mesh
+        int edgeVertCount = topEdgeVerts.Count;
+
+        // Add top edge vertices
+        verts.AddRange(topEdgeVerts);
+
+        // Add bottom edge vertices
+        for (int i = 0; i < edgeVertCount; i++)
+        {
+            Vector3 bottomVert = new Vector3(topEdgeVerts[i].x, sideDepth, topEdgeVerts[i].z);
+            verts.Add(bottomVert);
+        }
+
+        // Create side triangles
+        for (int i = 0; i < edgeVertCount; i++)
+        {
+            int next = (i + 1) % edgeVertCount;
+            int topCurrent = i;
+            int topNext = next;
+            int bottomCurrent = edgeVertCount + i;
+            int bottomNext = edgeVertCount + next;
+
+            // Create quad
+            triangles.Add(topCurrent);
+            triangles.Add(topNext);
+            triangles.Add(bottomCurrent);
+
+            triangles.Add(topNext);
+            triangles.Add(bottomNext);
+            triangles.Add(bottomCurrent);
+        }
+
+        // Optional bottom face
+        if (generateBottom)
+        {
+            int centerIndex = verts.Count;
+            verts.Add(new Vector3(0, sideDepth, 0)); // Center point for bottom
+
+            for (int i = 0; i < edgeVertCount; i++)
+            {
+                int next = (i + 1) % edgeVertCount;
+                triangles.Add(centerIndex);
+                triangles.Add(edgeVertCount + next);
+                triangles.Add(edgeVertCount + i);
+            }
+        }
+
+        sidesMesh = new Mesh();
+        sidesMesh.name = "TerrainSides";
+        sidesMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        sidesMesh.vertices = verts.ToArray();
+        sidesMesh.triangles = triangles.ToArray();
+        sidesMesh.RecalculateNormals();
+        sidesMesh.RecalculateBounds();
+
+        sidesMeshFilter.sharedMesh = sidesMesh;
+        sidesMeshCollider.sharedMesh = sidesMesh;
+        sidesMeshRenderer.sharedMaterial = sideMaterial != null ? sideMaterial : material;
     }
 
     public MeshFilter GetMeshFilter()
     {
-        if (meshFilter == null)
-        {
-            AssignMeshComponents();
-        }
-        return meshFilter;
+        // Return first chunk's mesh filter for compatibility
+        if (terrainChunks.Count > 0)
+            return terrainChunks[0].meshFilter;
+        return null;
     }
 
-    public void BakeNavMesh()
+    void BakeNavMesh()
     {
+        // Find or create NavMeshSurface on parent
+        if (navMeshSurface == null)
+            navMeshSurface = GetComponent<NavMeshSurface>();
+
+        if (navMeshSurface == null)
+            navMeshSurface = gameObject.AddComponent<NavMeshSurface>();
+
         if (navMeshSurface != null)
         {
             navMeshSurface.BuildNavMesh();
@@ -402,7 +475,7 @@ public class TerrainGenerator : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning("NavMeshSurface component not found on Mesh Holder object. Please add one.");
+            Debug.LogWarning("NavMeshSurface component not found. Please add one.");
         }
     }
 }
