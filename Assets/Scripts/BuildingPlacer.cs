@@ -22,19 +22,40 @@ public class BuildingPlacer : MonoBehaviour
     private int mapSize;
     private int erosionBrushRadius;
     private List<GameObject> placedBuildings = new List<GameObject>();
+    private Transform buildingsHolder;
 
-    void Awake()
+    void EnsureBuildingsHolder()
     {
-        terrainGenerator = GetComponent<TerrainGenerator>();
+        if (buildingsHolder == null)
+        {
+            buildingsHolder = transform.Find("Buildings");
+        }
+
+        if (buildingsHolder == null)
+        {
+            GameObject holder = new GameObject("Buildings");
+            holder.transform.parent = transform;
+            holder.transform.localPosition = Vector3.zero;
+            holder.transform.localRotation = Quaternion.identity;
+            holder.transform.localScale = Vector3.one;
+            buildingsHolder = holder.transform;
+        }
     }
 
     public void PlaceBuilding(Vector3 worldPosition)
     {
         if (terrainGenerator == null)
         {
+            terrainGenerator = GetComponent<TerrainGenerator>();
+        }
+
+        if (terrainGenerator == null)
+        {
             Debug.LogError("TerrainGenerator not found!");
             return;
         }
+
+        EnsureBuildingsHolder();
 
         if (buildings.Count == 0)
         {
@@ -90,7 +111,7 @@ public class BuildingPlacer : MonoBehaviour
         Vector3 buildingPosition = MapToWorldCoordinates(mapCoord, flattenedHeight);
         GameObject buildingInstance = Instantiate(selectedBuilding.prefab, buildingPosition, Quaternion.identity);
         buildingInstance.name = $"{selectedBuilding.name ?? selectedBuilding.prefab.name} ({placedBuildings.Count})";
-        buildingInstance.transform.parent = transform;
+        buildingInstance.transform.parent = buildingsHolder;
         placedBuildings.Add(buildingInstance);
 
         Debug.Log($"Building placed at {buildingPosition}");
@@ -200,6 +221,8 @@ public class BuildingPlacer : MonoBehaviour
 
     public void PlaceRandomBuilding()
     {
+        EnsureBuildingsHolder();
+
         if (buildings.Count == 0)
         {
             Debug.LogError("No buildings configured!");
@@ -232,11 +255,24 @@ public class BuildingPlacer : MonoBehaviour
 
     public void ClearAllBuildings()
     {
+        // Clear tracked buildings
         foreach (var building in placedBuildings)
         {
             if (building != null)
                 DestroyImmediate(building);
         }
         placedBuildings.Clear();
+
+        // Find and clear the holder's children
+        Transform holder = transform.Find("Buildings");
+        if (holder != null)
+        {
+            while (holder.childCount > 0)
+            {
+                DestroyImmediate(holder.GetChild(0).gameObject);
+            }
+        }
+
+        buildingsHolder = null; // Reset reference so it can be recreated
     }
 }

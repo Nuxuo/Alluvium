@@ -72,6 +72,12 @@ public class TerrainGenerator : MonoBehaviour
             pathfinder.ClearPath();
         }
 
+        // Clear any existing buildings
+        if (TryGetComponent(out BuildingPlacer buildingPlacer))
+        {
+            buildingPlacer.ClearAllBuildings();
+        }
+
         var sw = new System.Diagnostics.Stopwatch();
         if (printTimers) sw.Start();
 
@@ -366,23 +372,23 @@ public class TerrainGenerator : MonoBehaviour
         {
             Vector3[] vertices = chunk.mesh.vertices;
             Vector3[] normals = chunk.mesh.normals;
-        
+
             int width = chunkSize + 1;
             int height = chunkSize + 1;
-        
+
             // Only process edges
             for (int i = 0; i < vertices.Length; i++)
             {
                 int x = i % width;
                 int z = i / width;
-            
+
                 // Skip interior vertices
                 if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
                     continue;
-            
+
                 Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
-                long key = ((long)(worldPos.x * 1000f) << 42) | 
-                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                long key = ((long)(worldPos.x * 1000f) << 42) |
+                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 |
                           ((long)(worldPos.z * 1000f) & 0x1FFFFF);
 
                 Vector3 worldNormal = chunk.meshFilter.transform.TransformDirection(normals[i]);
@@ -412,21 +418,21 @@ public class TerrainGenerator : MonoBehaviour
         {
             Vector3[] vertices = chunk.mesh.vertices;
             Vector3[] normals = chunk.mesh.normals;
-        
+
             int width = chunkSize + 1;
             int height = chunkSize + 1;
-        
+
             for (int i = 0; i < vertices.Length; i++)
             {
                 int x = i % width;
                 int z = i / width;
-            
+
                 if (x > 0 && x < width - 1 && z > 0 && z < height - 1)
                     continue;
-            
+
                 Vector3 worldPos = chunk.meshFilter.transform.TransformPoint(vertices[i]);
-                long key = ((long)(worldPos.x * 1000f) << 42) | 
-                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 | 
+                long key = ((long)(worldPos.x * 1000f) << 42) |
+                          ((long)(worldPos.y * 1000f) & 0x1FFFFF) << 21 |
                           ((long)(worldPos.z * 1000f) & 0x1FFFFF);
 
                 if (boundaryNormals.TryGetValue(key, out Vector3 smoothedNormal))
