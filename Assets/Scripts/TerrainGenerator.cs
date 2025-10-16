@@ -591,6 +591,18 @@ public class TerrainGenerator : MonoBehaviour
 
         if (navMeshSurface != null)
         {
+            // Configure NavMeshSurface settings
+            navMeshSurface.collectObjects = CollectObjects.Children; // Collect child objects (terrain chunks)
+            navMeshSurface.useGeometry = NavMeshCollectGeometry.RenderMeshes; // Use render meshes
+            navMeshSurface.layerMask = ~0; // Include all layers
+
+            // Optional: Set specific area for the terrain
+            navMeshSurface.defaultArea = 0; // Walkable area
+
+            // Clear any existing NavMesh data before rebuilding
+            navMeshSurface.RemoveData();
+
+            // Build the NavMesh
             navMeshSurface.BuildNavMesh();
             Debug.Log("NavMesh baked successfully!");
         }

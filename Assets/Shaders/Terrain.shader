@@ -13,6 +13,14 @@
         _GridOffset ("Grid Offset", Float) = 0.0005
         _GridFadeStart ("Grid Fade Start Distance", Float) = 10
         _GridFadeEnd ("Grid Fade End Distance", Float) = 30
+        
+        [Header(Highlight Settings)]
+        _HighlightCenter ("Highlight Center", Vector) = (0,0,0,0)
+        _HighlightRadius ("Highlight Radius (cells)", Float) = 3
+        _HighlightColor ("Highlight Color (Valid)", Color) = (0,1,1,0.8)
+        _InvalidColor ("Highlight Color (Invalid)", Color) = (1,0,0,0.8)
+        _HighlightIntensity ("Highlight Intensity", Range(0,1)) = 0.8
+        _IsValidPlacement ("Is Valid Placement", Float) = 1
     }
     SubShader
     {
@@ -40,22 +48,41 @@
         float _GridOffset;
         float _GridFadeStart;
         float _GridFadeEnd;
+        
+        // Highlight properties
+        float3 _HighlightCenter;
+        float _HighlightRadius;
+        fixed4 _HighlightColor;
+        fixed4 _InvalidColor;
+        float _HighlightIntensity;
+        float _IsValidPlacement;
 
         // Function to calculate grid lines
         float GetGrid(float2 pos, float spacing, float width) {
-            // Offset to align with vertex positions (centered terrain grid)
-            // This ensures grid lines fall on vertex boundaries, not in cell centers
             pos += _GridOffset;
-            
-            // Calculate position within grid cell (0 to spacing)
             float2 gridPos = frac(pos / spacing) * spacing;
-            
-            // Create grid lines at cell boundaries
             float2 grid = smoothstep(width, 0, gridPos) + 
                          smoothstep(width, 0, spacing - gridPos);
-            
-            // Combine x and z grid lines
             return saturate(grid.x + grid.y);
+        }
+        
+        // Function to get grid cell coordinates
+        float2 GetGridCell(float2 pos, float spacing) {
+            pos += _GridOffset;
+            return floor(pos / spacing);
+        }
+        
+        // Function to check if a cell should be highlighted (square selection)
+        bool IsInHighlightArea(float2 worldPos) {
+            float2 currentCell = GetGridCell(worldPos, _GridSpacing);
+            float2 centerCell = GetGridCell(float2(_HighlightCenter.x, _HighlightCenter.z), _GridSpacing);
+            
+            // Use Chebyshev distance for square selection (max of x and y difference)
+            float distX = abs(currentCell.x - centerCell.x);
+            float distY = abs(currentCell.y - centerCell.y);
+            float maxDist = max(distX, distY);
+            
+            return maxDist <= _HighlightRadius;
         }
 
         void surf (Input IN, inout SurfaceOutputStandard o) {
@@ -67,21 +94,29 @@
 
             // Apply grid if enabled
             if (_ShowGrid > 0.5) {
-                // Calculate grid intensity
                 float2 gridPos = float2(IN.worldPos.x, IN.worldPos.z);
                 float gridIntensity = GetGrid(gridPos, _GridSpacing, _GridWidth);
                 
                 // Calculate distance-based fade
-                float3 cameraPos = _WorldSpaceCameraPos;
-                float distToCamera = distance(IN.worldPos, cameraPos);
+                float distToCamera = distance(IN.worldPos, _WorldSpaceCameraPos);
                 float fadeFactor = 1 - saturate((distToCamera - _GridFadeStart) / (_GridFadeEnd - _GridFadeStart));
                 
-                // Apply grid with fade
                 gridIntensity *= fadeFactor;
-                terrainColor = lerp(terrainColor, _GridColor, gridIntensity * _GridColor.a);
+                
+                // Check if we're in the highlight area
+                bool inHighlight = IsInHighlightArea(gridPos);
+                
+                // Choose color based on validity
+                fixed4 gridColorToUse = _GridColor;
+                if (inHighlight) {
+                    gridColorToUse = _IsValidPlacement > 0.5 ? _HighlightColor : _InvalidColor;
+                }
+                
+                float intensityToUse = inHighlight ? gridIntensity * _HighlightIntensity : gridIntensity * _GridColor.a;
+                
+                terrainColor = lerp(terrainColor, gridColorToUse, intensityToUse);
             }
 
-            // Apply the final color
             o.Albedo = terrainColor.rgb;
         }
         ENDCG
