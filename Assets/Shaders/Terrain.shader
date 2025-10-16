@@ -1,9 +1,18 @@
-﻿Shader "Custom/TerrainWithGrid" {
+﻿Shader "Custom/TerrainWithGridTextured" {
     Properties {
-        _GrassColour ("Grass Colour", Color) = (0,1,0,1)
-        _RockColour ("Rock Colour", Color) = (1,1,1,1)
+        [Header(Terrain Textures)]
+        _GrassTexture ("Grass Albedo", 2D) = "white" {}
+        _GrassNormal ("Grass Normal", 2D) = "bump" {}
+        _GrassScale ("Grass Texture Scale", Float) = 5
+        
+        _RockTexture ("Rock Albedo", 2D) = "white" {}
+        _RockNormal ("Rock Normal", 2D) = "bump" {}
+        _RockScale ("Rock Texture Scale", Float) = 5
+        
+        [Header(Material Properties)]
         _GrassSlopeThreshold ("Grass Slope Threshold", Range(0,1)) = .5
         _GrassBlendAmount ("Grass Blend Amount", Range(0,1)) = .5
+        _Smoothness ("Smoothness", Range(0,1)) = 0.2
         
         [Header(Grid Settings)]
         [Toggle] _ShowGrid ("Show Grid", Float) = 1
@@ -29,18 +38,24 @@
         #pragma surface surf Standard fullforwardshadows
         #pragma target 3.0
 
+        sampler2D _GrassTexture;
+        sampler2D _GrassNormal;
+        sampler2D _RockTexture;
+        sampler2D _RockNormal;
+
         struct Input {
             float3 worldPos;
             float3 worldNormal;
+            INTERNAL_DATA
         };
 
+        float _GrassScale;
+        float _RockScale;
         half _MaxHeight;
         half _GrassSlopeThreshold;
         half _GrassBlendAmount;
-        fixed4 _GrassColour;
-        fixed4 _RockColour;
+        half _Smoothness;
         
-        // Grid properties
         float _ShowGrid;
         float _GridSpacing;
         fixed4 _GridColor;
@@ -49,7 +64,6 @@
         float _GridFadeStart;
         float _GridFadeEnd;
         
-        // Highlight properties
         float3 _HighlightCenter;
         float _HighlightRadius;
         fixed4 _HighlightColor;
@@ -57,7 +71,20 @@
         float _HighlightIntensity;
         float _IsValidPlacement;
 
-        // Function to calculate grid lines
+        fixed4 TriplanarTexture(sampler2D tex, float3 worldPos, float3 normal, float scale) {
+            float3 blend = abs(normal);
+            blend = pow(blend, 4);
+            blend = normalize(max(blend, 0.00001));
+            float b = (blend.x + blend.y + blend.z);
+            blend /= float3(b, b, b);
+            
+            fixed4 xaxis = tex2D(tex, worldPos.zy * scale);
+            fixed4 yaxis = tex2D(tex, worldPos.xz * scale);
+            fixed4 zaxis = tex2D(tex, worldPos.xy * scale);
+            
+            return xaxis * blend.x + yaxis * blend.y + zaxis * blend.z;
+        }
+
         float GetGrid(float2 pos, float spacing, float width) {
             pos += _GridOffset;
             float2 gridPos = frac(pos / spacing) * spacing;
@@ -66,18 +93,15 @@
             return saturate(grid.x + grid.y);
         }
         
-        // Function to get grid cell coordinates
         float2 GetGridCell(float2 pos, float spacing) {
             pos += _GridOffset;
             return floor(pos / spacing);
         }
         
-        // Function to check if a cell should be highlighted (square selection)
         bool IsInHighlightArea(float2 worldPos) {
             float2 currentCell = GetGridCell(worldPos, _GridSpacing);
             float2 centerCell = GetGridCell(float2(_HighlightCenter.x, _HighlightCenter.z), _GridSpacing);
             
-            // Use Chebyshev distance for square selection (max of x and y difference)
             float distX = abs(currentCell.x - centerCell.x);
             float distY = abs(currentCell.y - centerCell.y);
             float maxDist = max(distX, distY);
@@ -86,38 +110,43 @@
         }
 
         void surf (Input IN, inout SurfaceOutputStandard o) {
-            // Calculate slope-based color
+            // Calculate slope (0 = flat, 1 = vertical)
             float slope = 1 - IN.worldNormal.y;
+            
+            // Blend grass and rock based on slope
             float grassBlendHeight = _GrassSlopeThreshold * (1 - _GrassBlendAmount);
             float grassWeight = 1 - saturate((slope - grassBlendHeight) / (_GrassSlopeThreshold - grassBlendHeight));
-            fixed4 terrainColor = _GrassColour * grassWeight + _RockColour * (1 - grassWeight);
+            
+            // Sample textures
+            fixed4 grassAlbedo = TriplanarTexture(_GrassTexture, IN.worldPos, IN.worldNormal, _GrassScale);
+            fixed4 rockAlbedo = TriplanarTexture(_RockTexture, IN.worldPos, IN.worldNormal, _RockScale);
+            
+            // Blend
+            fixed4 terrainColor = grassAlbedo * grassWeight + rockAlbedo * (1 - grassWeight);
 
-            // Apply grid if enabled
+            // Apply grid
             if (_ShowGrid > 0.5) {
                 float2 gridPos = float2(IN.worldPos.x, IN.worldPos.z);
                 float gridIntensity = GetGrid(gridPos, _GridSpacing, _GridWidth);
                 
-                // Calculate distance-based fade
                 float distToCamera = distance(IN.worldPos, _WorldSpaceCameraPos);
                 float fadeFactor = 1 - saturate((distToCamera - _GridFadeStart) / (_GridFadeEnd - _GridFadeStart));
                 
                 gridIntensity *= fadeFactor;
                 
-                // Check if we're in the highlight area
                 bool inHighlight = IsInHighlightArea(gridPos);
-                
-                // Choose color based on validity
                 fixed4 gridColorToUse = _GridColor;
                 if (inHighlight) {
                     gridColorToUse = _IsValidPlacement > 0.5 ? _HighlightColor : _InvalidColor;
                 }
                 
                 float intensityToUse = inHighlight ? gridIntensity * _HighlightIntensity : gridIntensity * _GridColor.a;
-                
                 terrainColor = lerp(terrainColor, gridColorToUse, intensityToUse);
             }
 
             o.Albedo = terrainColor.rgb;
+            o.Smoothness = _Smoothness;
+            o.Metallic = 0;
         }
         ENDCG
     }
