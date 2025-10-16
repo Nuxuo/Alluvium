@@ -81,7 +81,7 @@ Material:
     - _GrassBlendAmount: 0.507
     - _GrassFlatnessThreshold: 0.1
     - _GrassSlopeThreshold: 0.105
-    - _GridFadeEnd: 5
+    - _GridFadeEnd: 3
     - _GridFadeStart: 1
     - _GridOffset: 0.005
     - _GridSpacing: 0.01
@@ -89,12 +89,12 @@ Material:
     - _HighlightIntensity: 0.8
     - _HighlightRadius: 0
     - _IsValidPlacement: 0
-    - _MaxHeight: 0.3
+    - _MaxHeight: 0.2
     - _Metallic: 0
     - _Mode: 0
     - _OcclusionStrength: 1
     - _Parallax: 0.02
-    - _ShowGrid: 1
+    - _ShowGrid: 0
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
@@ -108,7 +108,7 @@ Material:
     - _GrassColour: {r: 0.30831054, g: 0.33962262, b: 0, a: 1}
     - _GrassColour2: {r: 0.08072188, g: 0.11320752, b: 0, a: 1}
     - _GridColor: {r: 0, g: 0, b: 0, a: 0.5}
-    - _HighlightCenter: {r: 5.1136885, g: 2.4909565, b: 2.8183808, a: 0}
+    - _HighlightCenter: {r: -0.62, g: 0.3148855, b: -4.73, a: 0}
     - _HighlightColor: {r: 0, g: 1, b: 0, a: 1}
     - _InvalidColor: {r: 1, g: 0, b: 0, a: 0.8}
     - _RockColour: {r: 0.4811321, g: 0.45265538, b: 0.44255075, a: 1}
