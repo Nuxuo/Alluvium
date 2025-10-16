@@ -1,4 +1,5 @@
-﻿using UnityEditor;
+﻿
+using UnityEditor;
 using UnityEngine;
 
 [CustomEditor(typeof(TerrainGenerator))]
@@ -13,6 +14,41 @@ public class MeshEditor : Editor
         if (GUILayout.Button("Generate Terrain"))
         {
             terrainGenerator.GenerateTerrain();
+        }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Building Mode", EditorStyles.boldLabel);
+
+        BuildingModeController buildingModeController = terrainGenerator.GetComponent<BuildingModeController>();
+        if (buildingModeController == null)
+        {
+            if (GUILayout.Button("Add Building Mode Controller"))
+            {
+                buildingModeController = terrainGenerator.gameObject.AddComponent<BuildingModeController>();
+                Debug.Log("BuildingModeController component was added.");
+            }
+        }
+        else
+        {
+            // Building mode toggle
+            bool buildingMode = buildingModeController.buildingModeEnabled;
+            bool newBuildingMode = EditorGUILayout.Toggle("Building Mode Enabled", buildingMode);
+
+            if (newBuildingMode != buildingMode)
+            {
+                Undo.RecordObject(buildingModeController, "Toggle Building Mode");
+                buildingModeController.buildingModeEnabled = newBuildingMode;
+                EditorUtility.SetDirty(buildingModeController);
+            }
+
+            if (buildingModeController.buildingModeEnabled)
+            {
+                EditorGUILayout.HelpBox("Building Mode is ACTIVE - Grid is visible", MessageType.Info);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox("Building Mode is OFF - Grid is hidden", MessageType.None);
+            }
         }
 
         EditorGUILayout.Space();
